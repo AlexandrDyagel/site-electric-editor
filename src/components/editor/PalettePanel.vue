@@ -3,6 +3,8 @@ import { computed, ref, watch } from 'vue'
 import {
   AlignJustify,
   Cpu,
+  Eraser,
+  FilePlus2,
   Gauge,
   GripVertical,
   LogIn,
@@ -26,6 +28,8 @@ import { formatRub } from '@/utils/format'
 
 const emit = defineEmits<{
   close: []
+  'new-project': []
+  'clear-panel': []
 }>()
 
 const library = useLibraryStore()
@@ -325,7 +329,24 @@ function setCurve(value: string): void {
       </div>
     </div>
 
-    <div class="shrink-0 border-t border-white/[.07] bg-white/[.02] px-4 py-2.5">
+    <div class="shrink-0 border-t border-white/[.07] bg-white/[.02] px-3 py-2.5">
+      <div class="mb-2 grid grid-cols-2 gap-1.5 md:hidden">
+        <button
+          type="button"
+          class="flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/[.04] py-2 text-[9px] font-bold text-cloud-300 transition hover:border-volt-400/30 hover:text-white"
+          @click="emit('new-project'); emit('close')"
+        >
+          <FilePlus2 :size="12" class="text-volt-300" /> Новый проект
+        </button>
+        <button
+          type="button"
+          class="flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/[.04] py-2 text-[9px] font-bold text-cloud-300 transition hover:border-rose-400/30 hover:text-rose-200 disabled:opacity-30"
+          :disabled="panel.componentCount === 0 && panel.wireCount === 0"
+          @click="emit('clear-panel'); emit('close')"
+        >
+          <Eraser :size="12" /> Очистить
+        </button>
+      </div>
       <p class="flex items-center gap-1.5 text-[8px] leading-4 text-cloud-400/50">
         <GripVertical :size="10" />
         Перетащите карточку на нужную позицию рейки или нажмите «+»

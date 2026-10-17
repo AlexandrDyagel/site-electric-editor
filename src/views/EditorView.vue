@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Activity, SlidersHorizontal, X } from 'lucide-vue-next'
+import { Activity, Eraser, FilePlus2, SlidersHorizontal, X } from 'lucide-vue-next'
 import type { LoadConsumer } from '@/types'
 import EditorToolbar from '@/components/editor/EditorToolbar.vue'
 import PalettePanel from '@/components/editor/PalettePanel.vue'
@@ -33,6 +33,9 @@ const consumerEditing = ref<LoadConsumer | null>(null)
 const consumerLineUid = ref<string | null>(null)
 const renameOpen = ref(false)
 const renameName = ref('')
+const newProjectOpen = ref(false)
+const clearPanelOpen = ref(false)
+const newProjectName = ref('Новый проект щита')
 
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null
 let stopWatch: (() => void) | null = null
@@ -117,6 +120,51 @@ function openRename(): void {
   renameOpen.value = true
 }
 
+function openNewProject(): void {
+  paletteOpen.value = false
+  inspectorOpen.value = false
+  newProjectName.value = 'Новый проект щита'
+  newProjectOpen.value = true
+}
+
+function createNewProject(): void {
+  if (autosaveTimer) {
+    clearTimeout(autosaveTimer)
+    autosaveTimer = null
+  }
+  // Не теряем текущую работу: сохраняем её перед переключением.
+  if (panel.componentCount > 0) {
+    projects.save(panel.project)
+  }
+  const created = projects.create(newProjectName.value.trim() || 'Новый проект щита')
+  panel.loadProject(created)
+  dirty.value = false
+  newProjectOpen.value = false
+  void router.replace({ path: '/editor', query: { id: created.id } })
+  ui.toast({ title: 'Новый проект создан', message: created.name, tone: 'success' })
+}
+
+function openClearPanel(): void {
+  paletteOpen.value = false
+  inspectorOpen.value = false
+  clearPanelOpen.value = true
+}
+
+function confirmClearPanel(): void {
+  const result = panel.clearPanel()
+  clearPanelOpen.value = false
+  if (!result.ok) {
+    ui.toast({ title: 'Щит уже пуст', message: result.message, tone: 'info' })
+    return
+  }
+  dirty.value = true
+  ui.toast({
+    title: 'Щит очищен',
+    message: 'Действие можно отменить через Ctrl+Z',
+    tone: 'info',
+  })
+}
+
 function confirmRename(): void {
   panel.updateProjectMeta({ name: renameName.value })
   renameOpen.value = false
@@ -173,6 +221,8 @@ onBeforeUnmount(() => {
       @export="exportOpen = true"
       @settings="settingsOpen = true"
       @rename="openRename"
+      @new-project="openNewProject"
+      @clear-panel="openClearPanel"
     />
 
     <div class="relative flex min-h-0 flex-1">
@@ -236,7 +286,11 @@ onBeforeUnmount(() => {
     >
       <div v-if="paletteOpen" class="fixed inset-0 z-[80] flex bg-ink-950/70 backdrop-blur-sm lg:hidden" @click.self="paletteOpen = false">
         <div class="h-full w-[310px] max-w-[88vw] shadow-2xl">
-          <PalettePanel @close="paletteOpen = false" />
+          <PalettePanel
+            @close="paletteOpen = false"
+            @new-project="openNewProject"
+            @clear-panel="openClearPanel"
+          />
         </div>
       </div>
     </Transition>
@@ -305,6 +359,80 @@ onBeforeUnmount(() => {
       <template #footer>
         <button type="button" class="btn-secondary" @click="renameOpen = false">Отмена</button>
         <button type="button" class="btn-primary" @click="confirmRename">Сохранить</button>
+      </template>
+    </ModalPanel>
+
+    <ModalPanel
+      v-model="newProjectOpen"
+      title="Новый проект"
+      description="Создать пустой щит и открыть его в редакторе."
+      size="sm"
+    >
+      <div class="space-y-4">
+        <label class="block">
+          <span class="field-label">Название проекта</span>
+          <input
+            v-model="newProjectName"
+            class="input"
+            placeholder="Например, Щит коттеджа"
+            @keyup.enter="createNewProject"
+          />
+        </label>
+        <div class="flex items-start gap-2.5 rounded-xl border border-volt-500/20 bg-volt-400/[.06] p-3">
+          <FilePlus2 :size="15" class="mt-0.5 shrink-0 text-volt-700 dark:text-volt-300" />
+          <p class="text-[10px] leading-5 text-ink-600 dark:text-cloud-300">
+            Если в текущем щите есть оборудование, он будет сохранён в «Проектах» перед созданием нового.
+          </p>
+        </div>
+        <p class="text-[10px] leading-5 text-ink-400 dark:text-cloud-400/60">
+          Новый проект создаётся с тремя DIN-рейками и трёхфазным вводом 400 В. Параметры можно изменить.
+        </p>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" @click="newProjectOpen = false">Отмена</button>
+        <button type="button" class="btn-primary" @click="createNewProject">
+          <FilePlus2 :size="14" /> Создать проект
+        </button>
+      </template>
+    </ModalPanel>
+
+    <ModalPanel
+      v-model="clearPanelOpen"
+      title="Очистить щит?"
+      description="Будут удалены всё оборудование, провода и нагрузки."
+      size="sm"
+    >
+      <div class="space-y-4">
+        <div class="flex items-start gap-3 rounded-xl border border-rose-500/25 bg-rose-500/[.07] p-3.5">
+          <Eraser :size="18" class="mt-0.5 shrink-0 text-rose-600 dark:text-rose-300" />
+          <div>
+            <p class="text-xs font-extrabold text-rose-700 dark:text-rose-200">Щит станет пустым</p>
+            <p class="mt-1 text-[10px] leading-5 text-rose-700/70 dark:text-rose-200/70">
+              DIN-рейки, название, описание и параметры питания сохранятся. Действие можно отменить через
+              <span class="font-mono font-bold">Ctrl+Z</span>.
+            </p>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="rounded-lg border border-cloud-200 bg-cloud-50 px-3 py-2 text-center dark:border-white/[.07] dark:bg-white/[.03]">
+            <p class="font-mono text-lg font-bold text-ink-900 dark:text-white">{{ panel.componentCount }}</p>
+            <p class="text-[8px] uppercase tracking-wider text-ink-400 dark:text-cloud-400/50">компонентов</p>
+          </div>
+          <div class="rounded-lg border border-cloud-200 bg-cloud-50 px-3 py-2 text-center dark:border-white/[.07] dark:bg-white/[.03]">
+            <p class="font-mono text-lg font-bold text-ink-900 dark:text-white">{{ panel.wireCount }}</p>
+            <p class="text-[8px] uppercase tracking-wider text-ink-400 dark:text-cloud-400/50">проводов</p>
+          </div>
+          <div class="rounded-lg border border-cloud-200 bg-cloud-50 px-3 py-2 text-center dark:border-white/[.07] dark:bg-white/[.03]">
+            <p class="font-mono text-lg font-bold text-ink-900 dark:text-white">{{ panel.project.consumers.length }}</p>
+            <p class="text-[8px] uppercase tracking-wider text-ink-400 dark:text-cloud-400/50">нагрузок</p>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-secondary" @click="clearPanelOpen = false">Отмена</button>
+        <button type="button" class="btn-danger" @click="confirmClearPanel">
+          <Eraser :size="14" /> Очистить щит
+        </button>
       </template>
     </ModalPanel>
   </div>

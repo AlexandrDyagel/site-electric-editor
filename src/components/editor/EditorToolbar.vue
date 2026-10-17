@@ -6,6 +6,8 @@ import {
   Check,
   ChevronDown,
   Download,
+  Eraser,
+  FilePlus2,
   PanelLeft,
   Pencil,
   Redo2,
@@ -28,6 +30,8 @@ defineProps<{
 const emit = defineEmits<{
   'open-palette': []
   'open-inspector': []
+  'new-project': []
+  'clear-panel': []
   save: []
   export: []
   settings: []
@@ -92,7 +96,7 @@ function notifySave(): void {
         </span>
         <span class="min-w-0">
           <span class="flex items-center gap-1">
-            <span class="max-w-[140px] truncate text-[12px] font-extrabold text-white sm:max-w-[240px]">{{ panel.project.name }}</span>
+            <span class="max-w-[120px] truncate text-[12px] font-extrabold text-white sm:max-w-[200px]">{{ panel.project.name }}</span>
             <Pencil :size="10" class="shrink-0 text-cloud-400/40 transition group-hover:text-cloud-300" />
           </span>
           <span class="mt-0.5 block truncate font-mono text-[8px] text-cloud-400/50">
@@ -101,7 +105,31 @@ function notifySave(): void {
         </span>
       </button>
 
-      <StatusPill :status="status" size="sm" class="hidden md:inline-flex" />
+      <div class="hidden items-center gap-0.5 border-l border-white/[.08] pl-2 md:flex">
+        <button
+          type="button"
+          class="flex items-center gap-1.5 rounded-lg px-2 py-2 text-[10px] font-bold text-cloud-300 transition hover:bg-white/[.06] hover:text-white"
+          title="Новый проект"
+          aria-label="Новый проект"
+          @click="emit('new-project')"
+        >
+          <FilePlus2 :size="13" class="text-volt-300" />
+          <span class="hidden xl:inline">Новый проект</span>
+        </button>
+        <button
+          type="button"
+          class="flex items-center gap-1.5 rounded-lg px-2 py-2 text-[10px] font-bold text-cloud-300 transition hover:bg-rose-500/10 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-35"
+          :disabled="panel.componentCount === 0 && panel.wireCount === 0"
+          title="Очистить щит"
+          aria-label="Очистить щит"
+          @click="emit('clear-panel')"
+        >
+          <Eraser :size="13" />
+          <span class="hidden xl:inline">Очистить щит</span>
+        </button>
+      </div>
+
+      <StatusPill :status="status" size="sm" class="hidden lg:inline-flex" />
     </div>
 
     <div class="flex shrink-0 items-center gap-1 sm:gap-1.5">

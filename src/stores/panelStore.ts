@@ -142,6 +142,26 @@ export const usePanelStore = defineStore('panel', () => {
     return next
   }
 
+  function clearPanel(): ActionResult {
+    if (
+      project.value.components.length === 0 &&
+      project.value.wires.length === 0 &&
+      project.value.consumers.length === 0
+    ) {
+      return { ok: false, message: 'Щит уже пуст' }
+    }
+    snapshot()
+    project.value.components = []
+    project.value.wires = []
+    project.value.consumers = []
+    project.value.circuits = []
+    selectedComponentUid.value = null
+    selectedWireUid.value = null
+    activeTab.value = 'calc'
+    touch()
+    return { ok: true, message: 'Щит очищен. Действие можно отменить через Ctrl+Z' }
+  }
+
   function loadDemo(): PanelProject {
     const next = createDemoProject('Квартирный щит · демо')
     loadProject(next)
@@ -536,6 +556,7 @@ export const usePanelStore = defineStore('panel', () => {
     initialize,
     loadProject,
     newProject,
+    clearPanel,
     loadDemo,
     importProject,
     updateProjectMeta,
