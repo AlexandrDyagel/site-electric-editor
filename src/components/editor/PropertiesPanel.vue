@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import {
   AlertTriangle,
+  BoxSelect,
   Cable,
   CheckCircle2,
   Copy,
@@ -197,6 +198,17 @@ function removeSelected(): void {
   })
 }
 
+function removeSelectedGroup(): void {
+  const uids = [...panel.selectedComponentUids]
+  if (uids.length < 2) return
+  const result = panel.removeComponents(uids)
+  ui.toast({
+    title: result.ok ? 'Группа удалена' : 'Не удалось удалить',
+    message: result.message,
+    tone: result.ok ? 'success' : 'error',
+  })
+}
+
 function duplicateSelected(): void {
   if (!selected.value) return
   const result = panel.duplicateComponent(selected.value.placed.uid)
@@ -258,10 +270,10 @@ const detailRows = computed(() => {
     <div class="flex shrink-0 items-center justify-between border-b border-white/[.07] px-4 py-3">
       <div>
         <h2 class="text-sm font-extrabold text-white">
-          {{ selectedWire ? 'Провод' : selected ? 'Компонент' : 'Инспектор' }}
+          {{ selectedWire ? 'Провод' : panel.selectedCount > 1 ? `Выбрано: ${panel.selectedCount}` : selected ? 'Компонент' : 'Инспектор' }}
         </h2>
         <p class="mt-0.5 text-[9px] text-cloud-400/50">
-          {{ selectedWire ? 'Свойства соединения' : selected ? 'Параметры и настройки линии' : 'Проект и подсказки' }}
+          {{ selectedWire ? 'Свойства соединения' : panel.selectedCount > 1 ? 'Групповое выделение' : selected ? 'Параметры и настройки линии' : 'Проект и подсказки' }}
         </p>
       </div>
       <button type="button" class="rounded-lg p-1.5 text-cloud-400 transition hover:bg-white/[.06] hover:text-white" @click="emit('settings')">
@@ -338,6 +350,44 @@ const detailRows = computed(() => {
 
       <!-- COMPONENT -->
       <div v-else-if="selected" class="space-y-4">
+        <div
+          v-if="panel.selectedCount > 1"
+          class="rounded-2xl border border-volt-400/25 bg-volt-400/[.07] p-3.5"
+        >
+          <div class="flex items-center gap-2">
+            <span class="flex h-7 w-7 items-center justify-center rounded-lg border border-volt-400/25 bg-volt-400/10 text-volt-300">
+              <BoxSelect :size="14" />
+            </span>
+            <div>
+              <p class="text-[10px] font-extrabold text-white">
+                {{ panel.selectedCount }}
+                {{ pluralize(panel.selectedCount, 'аппарат', 'аппарата', 'аппаратов') }}
+              </p>
+              <p class="font-mono text-[8px] text-volt-300/70">{{ formatRub(panel.selectedTotalPrice) }}</p>
+            </div>
+          </div>
+          <p class="mt-2.5 text-[9px] leading-4 text-cloud-300/80">
+            Перетащите любой выделенный аппарат — вся группа сдвинется по сетке с сохранением взаимного расположения.
+            Shift+клик или рамка добавляют аппараты в выделение.
+          </p>
+          <div class="mt-2.5 flex gap-1.5">
+            <button
+              type="button"
+              class="flex flex-1 items-center justify-center gap-1 rounded-lg border border-white/10 bg-white/[.04] py-1.5 text-[9px] font-bold text-cloud-300 transition hover:text-white"
+              @click="panel.clearSelection()"
+            >
+              Снять выделение
+            </button>
+            <button
+              type="button"
+              class="flex flex-1 items-center justify-center gap-1 rounded-lg border border-rose-500/25 bg-rose-500/10 py-1.5 text-[9px] font-bold text-rose-300 transition hover:bg-rose-500/15"
+              @click="removeSelectedGroup"
+            >
+              <Trash2 :size="11" /> Удалить группу
+            </button>
+          </div>
+        </div>
+
         <div class="relative overflow-hidden rounded-2xl border border-white/10 bg-white/[.03] p-3.5">
           <div class="absolute left-0 top-0 h-full w-1" :style="{ backgroundColor: selected.def.category === 'rcd' || selected.def.category === 'rcbo' ? '#a3e635' : selected.def.category === 'buses' ? '#38bdf8' : '#f59e0b' }"></div>
           <div class="flex items-start justify-between gap-2">
@@ -356,7 +406,7 @@ const detailRows = computed(() => {
               {{ formatRub(selected.def.price) }}
             </span>
           </div>
-          <div class="mt-3 flex gap-1.5">
+          <div v-if="panel.selectedCount === 1" class="mt-3 flex gap-1.5">
             <button type="button" class="flex flex-1 items-center justify-center gap-1 rounded-lg border border-white/10 bg-white/[.04] py-1.5 text-[9px] font-bold text-cloud-300 transition hover:text-white" @click="duplicateSelected">
               <Copy :size="11" /> Дублировать
             </button>
@@ -567,6 +617,8 @@ const detailRows = computed(() => {
             <div class="flex items-center justify-between"><span>Удалить выбранное</span><span class="kbd">Del</span></div>
             <div class="flex items-center justify-between"><span>Отменить / повторить</span><span class="kbd">Ctrl Z</span></div>
             <div class="flex items-center justify-between"><span>Дублировать</span><span class="kbd">Ctrl D</span></div>
+            <div class="flex items-center justify-between"><span>Добавить к выделению</span><span class="kbd">Shift</span></div>
+            <div class="flex items-center justify-between"><span>Выбрать всё</span><span class="kbd">Ctrl A</span></div>
             <div class="flex items-center justify-between"><span>Панорама</span><span class="kbd">Space</span></div>
           </div>
         </div>

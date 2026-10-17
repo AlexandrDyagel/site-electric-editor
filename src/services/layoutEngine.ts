@@ -265,6 +265,86 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
+export interface GroupMovePosition {
+  railId: string
+  position: number
+}
+
+export interface GroupMovePlan {
+  positions: Map<string, GroupMovePosition>
+  /** Фактический сдвиг после поиска ближайшего свободного окна. */
+  deltaModules: number
+  deltaRails: number
+}
+
+/**
+ * План группового перемещения: все выбранные аппараты сдвигаются на одинаковое
+ * число модулей и реек, сохраняя взаимное расположение. Проверяются границы,
+ * столкновения с невыбранными аппаратами и наложения внутри группы.
+ */
+export function findGroupMove(
+  project: PanelProject,
+  componentUids: string[],
+  desiredDeltaModules: number,
+  desiredDeltaRails: number,
+): GroupMovePlan | null {
+  const selected = new Set(componentUids)
+  const items = project.components.filter((component) => selected.has(component.uid))
+  if (items.length === 0) return null
+  const railIndexes = new Map(project.rails.map((rail, index) => [rail.id, index]))
+  for (const item of items) {
+    if (!railIndexes.has(item.dinRailId) || componentSize(item) <= 0) return null
+  }
+
+  const buildPlan = (deltaModules: number, deltaRails: number): Map<string, GroupMovePosition> | null => {
+    const positions = new Map<string, GroupMovePosition>()
+    const intervals = new Map<string, OccupiedInterval[]>()
+    const addInterval = (railId: string, start: number, end: number): void => {
+      const list = intervals.get(railId) ?? []
+      list.push({ start, end })
+      intervals.set(railId, list)
+    }
+
+    for (const item of project.components) {
+      if (selected.has(item.uid)) continue
+      addInterval(item.dinRailId, item.position, item.position + componentSize(item))
+    }
+    for (const item of items) {
+      const sourceRailIndex = railIndexes.get(item.dinRailId)
+      if (sourceRailIndex === undefined) return null
+      const targetRailIndex = sourceRailIndex + deltaRails
+      const targetRail = project.rails[targetRailIndex]
+      if (!targetRail) return null
+      const size = componentSize(item)
+      const position = item.position + deltaModules
+      if (position < 0 || position + size > targetRail.capacity) return null
+      positions.set(item.uid, { railId: targetRail.id, position })
+      addInterval(targetRail.id, position, position + size)
+    }
+    for (const list of intervals.values()) {
+      list.sort((a, b) => a.start - b.start)
+      for (let index = 1; index < list.length; index += 1) {
+        const previous = list[index - 1]
+        const current = list[index]
+        if (previous && current && current.start < previous.end) return null
+      }
+    }
+    return positions
+  }
+
+  const desiredModules = Math.round(desiredDeltaModules)
+  const desiredRails = Math.round(desiredDeltaRails)
+  const limit = Math.max(...project.rails.map((rail) => rail.capacity), 24) * 2
+  for (let distance = 0; distance <= limit; distance += 1) {
+    const candidates = distance === 0 ? [desiredModules] : [desiredModules + distance, desiredModules - distance]
+    for (const deltaModules of candidates) {
+      const positions = buildPlan(deltaModules, desiredRails)
+      if (positions) return { positions, deltaModules, deltaRails: desiredRails }
+    }
+  }
+  return null
+}
+
 /**
  * Перемещение аппарата по рейке.
  * 1. Свободное окно в точке drop — точная позиция с сохранением промежутков.

@@ -14,7 +14,13 @@ import type {
 } from '@/types'
 import { createDemoProject, createEmptyProject } from '@/data/demo'
 import { getComponentDef } from '@/data/library'
-import { buildLayout, findRailForNewComponent, placeComponentOnRail, reorderOnRail } from '@/services/layoutEngine'
+import {
+  buildLayout,
+  findGroupMove,
+  findRailForNewComponent,
+  placeComponentOnRail,
+  reorderOnRail,
+} from '@/services/layoutEngine'
 import { calculatePanel } from '@/services/calcEngine'
 import { inferWireDraft, validateConnection } from '@/services/validationEngine'
 import { parseProjectJson, serializeProject } from '@/services/projectSerialization'
@@ -57,6 +63,7 @@ function loadDraft(): PanelProject | null {
 export const usePanelStore = defineStore('panel', () => {
   const project = ref<PanelProject>(createDemoProject())
   const selectedComponentUid = ref<string | null>(null)
+  const selectedComponentUids = ref<string[]>([])
   const selectedWireUid = ref<string | null>(null)
   const viewMode = ref<EditorViewMode>('bezier')
   const activeTab = ref<EditorTab>('calc')
@@ -68,6 +75,14 @@ export const usePanelStore = defineStore('panel', () => {
   const calculation = computed<CalculationResult>(() => calculatePanel(project.value, layout.value))
   const selectedComponent = computed<LayoutComponent | null>(
     () => layout.value.components.find((item) => item.placed.uid === selectedComponentUid.value) ?? null,
+  )
+  const selectedComponents = computed<LayoutComponent[]>(() => {
+    const selected = new Set(selectedComponentUids.value)
+    return layout.value.components.filter((item) => selected.has(item.placed.uid))
+  })
+  const selectedCount = computed(() => selectedComponents.value.length)
+  const selectedTotalPrice = computed(() =>
+    selectedComponents.value.reduce((sum, component) => sum + component.def.price, 0),
   )
   const selectedWire = computed<Wire | null>(
     () => project.value.wires.find((item) => item.uid === selectedWireUid.value) ?? null,
@@ -128,6 +143,7 @@ export const usePanelStore = defineStore('panel', () => {
   function loadProject(next: PanelProject): void {
     project.value = cloneDeep(next)
     selectedComponentUid.value = null
+    selectedComponentUids.value = []
     selectedWireUid.value = null
     history.value = []
     future.value = []
@@ -156,6 +172,7 @@ export const usePanelStore = defineStore('panel', () => {
     project.value.consumers = []
     project.value.circuits = []
     selectedComponentUid.value = null
+    selectedComponentUids.value = []
     selectedWireUid.value = null
     activeTab.value = 'calc'
     touch()
@@ -218,6 +235,7 @@ export const usePanelStore = defineStore('panel', () => {
     }
     project.value.components = result.components
     selectedComponentUid.value = placed.uid
+    selectedComponentUids.value = [placed.uid]
     selectedWireUid.value = null
     activeTab.value = 'inspector'
     touch()
@@ -249,28 +267,52 @@ export const usePanelStore = defineStore('panel', () => {
     return { ok: true, message }
   }
 
-  function removeComponent(uid: string): ActionResult {
-    const component = layout.value.components.find((item) => item.placed.uid === uid)
-    if (!component) return { ok: false, message: 'Компонент не найден' }
-    const prefix = `${uid}:`
+  function removeComponents(uids: string[]): ActionResult {
+    const unique = [...new Set(uids)]
+    if (unique.length === 0) return { ok: false, message: 'Ничего не выбрано' }
+    const selected = new Set(unique)
+    const targets = layout.value.components.filter((component) => selected.has(component.placed.uid))
+    if (targets.length === 0) return { ok: false, message: 'Компоненты не найдены' }
+    const prefixes = unique.map((uid) => `${uid}:`)
+    const isComponentTerminal = (terminalUid: string): boolean =>
+      prefixes.some((prefix) => terminalUid.startsWith(prefix))
     const removedWireIds = new Set(
       project.value.wires
-        .filter((wire) => wire.from.startsWith(prefix) || wire.to.startsWith(prefix))
+        .filter((wire) => isComponentTerminal(wire.from) || isComponentTerminal(wire.to))
         .map((wire) => wire.uid),
     )
     snapshot()
-    project.value.components = project.value.components.filter((item) => item.uid !== uid)
+    project.value.components = project.value.components.filter((item) => !selected.has(item.uid))
     project.value.wires = project.value.wires.filter((wire) => !removedWireIds.has(wire.uid))
     project.value.consumers = project.value.consumers.filter(
       (consumer) =>
-        !consumer.wireUidOrTerminalUid.startsWith(prefix) &&
+        !isComponentTerminal(consumer.wireUidOrTerminalUid) &&
         !removedWireIds.has(consumer.wireUidOrTerminalUid),
     )
-    project.value.circuits = project.value.circuits.filter((circuit) => circuit.componentUid !== uid)
-    if (selectedComponentUid.value === uid) selectedComponentUid.value = null
-    if (selectedWireUid.value && removedWireIds.has(selectedWireUid.value)) selectedWireUid.value = null
+    project.value.circuits = project.value.circuits.filter(
+      (circuit) => !selected.has(circuit.componentUid),
+    )
+    const remaining = selectedComponentUids.value.filter((uid) => !selected.has(uid))
+    selectedComponentUids.value = remaining
+    if (selectedComponentUid.value && selected.has(selectedComponentUid.value)) {
+      selectedComponentUid.value = remaining[remaining.length - 1] ?? null
+    }
+    if (selectedWireUid.value && removedWireIds.has(selectedWireUid.value)) {
+      selectedWireUid.value = null
+    }
     touch()
-    return { ok: true, message: `«${component.placed.customName ?? component.def.name}» удалён` }
+    const single = targets[0]
+    return {
+      ok: true,
+      message:
+        targets.length === 1 && single
+          ? `«${single.placed.customName ?? single.def.name}» удалён`
+          : `Удалено аппаратов: ${targets.length}`,
+    }
+  }
+
+  function removeComponent(uid: string): ActionResult {
+    return removeComponents([uid])
   }
 
   function duplicateComponent(uid: string): ActionResult {
@@ -303,6 +345,7 @@ export const usePanelStore = defineStore('panel', () => {
     }
     project.value.components = result.components
     selectedComponentUid.value = placed.uid
+    selectedComponentUids.value = [placed.uid]
     activeTab.value = 'inspector'
     touch()
     return { ok: true, message: 'Создана копия компонента' }
@@ -338,6 +381,7 @@ export const usePanelStore = defineStore('panel', () => {
     project.value.wires.push(wire)
     selectedWireUid.value = wire.uid
     selectedComponentUid.value = null
+    selectedComponentUids.value = []
     activeTab.value = 'inspector'
     touch()
     return { ok: true, message: 'Провод проложен' }
@@ -483,20 +527,83 @@ export const usePanelStore = defineStore('panel', () => {
     touch()
   }
 
-  function selectComponent(uid: string | null): void {
-    selectedComponentUid.value = uid
+  function moveComponents(
+    uids: string[],
+    deltaModules: number,
+    deltaRails: number,
+  ): ActionResult {
+    const unique = [...new Set(uids)]
+    if (unique.length === 0) return { ok: false, message: 'Ничего не выбрано' }
+    const plan = findGroupMove(project.value, unique, deltaModules, deltaRails)
+    if (!plan) {
+      return { ok: false, message: 'Для группы нет свободного места на выбранных рейках' }
+    }
+    if (plan.deltaModules === 0 && plan.deltaRails === 0) {
+      return { ok: false, message: 'Положение не изменилось' }
+    }
+    snapshot()
+    project.value.components = project.value.components.map((item) => {
+      const target = plan.positions.get(item.uid)
+      return target
+        ? { ...item, dinRailId: target.railId, position: target.position }
+        : item
+    })
+    touch()
+    return {
+      ok: true,
+      message:
+        plan.deltaModules !== deltaModules
+          ? `Группа перемещена в ближайшее свободное положение (${unique.length} шт.)`
+          : `Перемещено аппаратов: ${unique.length}`,
+    }
+  }
+
+  function selectComponent(uid: string | null, additive = false): void {
+    if (!uid) {
+      clearSelection()
+      return
+    }
+    if (additive) {
+      toggleComponentSelection(uid)
+      return
+    }
+    setSelection([uid], uid)
+  }
+
+  function selectComponents(uids: string[], primaryUid?: string, openInspector = true): void {
+    setSelection(uids, primaryUid, openInspector)
+  }
+
+  function toggleComponentSelection(uid: string): void {
+    if (!layout.value.components.some((component) => component.placed.uid === uid)) return
+    const current = selectedComponentUids.value
+    const next = current.includes(uid) ? current.filter((item) => item !== uid) : [...current, uid]
+    setSelection(next, uid)
+  }
+
+  function setSelection(uids: string[], primaryUid?: string, openInspector = true): void {
+    const valid = [...new Set(uids)].filter((uid) =>
+      layout.value.components.some((component) => component.placed.uid === uid),
+    )
+    selectedComponentUids.value = valid
+    selectedComponentUid.value =
+      primaryUid && valid.includes(primaryUid)
+        ? primaryUid
+        : (valid[valid.length - 1] ?? null)
     selectedWireUid.value = null
-    if (uid) activeTab.value = 'inspector'
+    if (valid.length > 0 && openInspector) activeTab.value = 'inspector'
   }
 
   function selectWire(uid: string | null): void {
     selectedWireUid.value = uid
     selectedComponentUid.value = null
+    selectedComponentUids.value = []
     if (uid) activeTab.value = 'inspector'
   }
 
   function clearSelection(): void {
     selectedComponentUid.value = null
+    selectedComponentUids.value = []
     selectedWireUid.value = null
   }
 
@@ -510,6 +617,7 @@ export const usePanelStore = defineStore('panel', () => {
     future.value.push(cloneDeep(project.value))
     project.value = previous
     selectedComponentUid.value = null
+    selectedComponentUids.value = []
     selectedWireUid.value = null
     persistDraft()
   }
@@ -520,6 +628,7 @@ export const usePanelStore = defineStore('panel', () => {
     history.value.push(cloneDeep(project.value))
     project.value = next
     selectedComponentUid.value = null
+    selectedComponentUids.value = []
     selectedWireUid.value = null
     persistDraft()
   }
@@ -538,8 +647,12 @@ export const usePanelStore = defineStore('panel', () => {
     layout,
     calculation,
     selectedComponentUid,
+    selectedComponentUids,
     selectedWireUid,
     selectedComponent,
+    selectedComponents,
+    selectedCount,
+    selectedTotalPrice,
     selectedDef,
     selectedWire,
     viewMode,
@@ -563,7 +676,9 @@ export const usePanelStore = defineStore('panel', () => {
     updateSupply,
     addComponent,
     moveComponent,
+    moveComponents,
     removeComponent,
+    removeComponents,
     duplicateComponent,
     renameComponent,
     addWire,
@@ -577,6 +692,8 @@ export const usePanelStore = defineStore('panel', () => {
     removeConsumer,
     updateCircuit,
     selectComponent,
+    selectComponents,
+    toggleComponentSelection,
     selectWire,
     clearSelection,
     setViewMode,

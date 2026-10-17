@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createDemoProject, createEmptyProject } from '@/data/demo'
-import { buildLayout, findFreeModule, placeComponentOnRail, reorderOnRail, terminalUid } from '@/services/layoutEngine'
+import { buildLayout, findFreeModule, findGroupMove, placeComponentOnRail, reorderOnRail, terminalUid } from '@/services/layoutEngine'
 import { calculatePanel, currentFromPower } from '@/services/calcEngine'
 import { validateConnection } from '@/services/validationEngine'
 import { calculateAmpacity, selectCableSection } from '@/data/pue'
@@ -114,6 +114,55 @@ describe('layout engine', () => {
     expect(stored?.position).toBe(13)
     expect(before).toBe(11)
     expect(result.components.find((item) => item.uid === 'bus-l')?.position).toBe(8)
+  })
+
+  it('перемещает группу аппаратов с сохранением взаимного расположения', () => {
+    const project = createEmptyProject()
+    project.components = [
+      { uid: 'group-a', defId: 'br-2p-c-16', dinRailId: 'rail-2', position: 0 },
+      { uid: 'group-b', defId: 'br-2p-c-16', dinRailId: 'rail-2', position: 2 },
+    ]
+    const plan = findGroupMove(project, ['group-a', 'group-b'], 4, 0)
+    expect(plan).not.toBeNull()
+    expect(plan?.deltaModules).toBe(4)
+    expect(plan?.positions.get('group-a')).toEqual({ railId: 'rail-2', position: 4 })
+    expect(plan?.positions.get('group-b')).toEqual({ railId: 'rail-2', position: 6 })
+  })
+
+  it('ищет свободное положение для группы и не ставит её на чужой аппарат', () => {
+    const project = createEmptyProject()
+    project.components = [
+      { uid: 'group-a', defId: 'br-2p-c-16', dinRailId: 'rail-2', position: 0 },
+      { uid: 'group-b', defId: 'br-2p-c-16', dinRailId: 'rail-2', position: 2 },
+      { uid: 'blocker', defId: 'br-2p-c-16', dinRailId: 'rail-2', position: 4 },
+    ]
+    const plan = findGroupMove(project, ['group-a', 'group-b'], 4, 0)
+    expect(plan).not.toBeNull()
+    const placements = [
+      ...project.components
+        .filter((component) => !['group-a', 'group-b'].includes(component.uid))
+        .map((component) => ({ start: component.position, end: component.position + 2 })),
+      ...[...plan!.positions.values()].map((target) => ({
+        start: target.position,
+        end: target.position + 2,
+      })),
+    ].sort((a, b) => a.start - b.start)
+    for (let index = 1; index < placements.length; index += 1) {
+      expect(placements[index]!.start).toBeGreaterThanOrEqual(placements[index - 1]!.end)
+    }
+  })
+
+  it('переносит группу на соседние рейки', () => {
+    const project = createEmptyProject()
+    project.components = [
+      { uid: 'group-a', defId: 'br-2p-c-16', dinRailId: 'rail-2', position: 0 },
+      { uid: 'group-b', defId: 'br-2p-c-16', dinRailId: 'rail-3', position: 0 },
+    ]
+    const plan = findGroupMove(project, ['group-a', 'group-b'], 0, -1)
+    expect(plan).not.toBeNull()
+    expect(plan?.positions.get('group-a')).toEqual({ railId: 'rail-1', position: 0 })
+    expect(plan?.positions.get('group-b')).toEqual({ railId: 'rail-2', position: 0 })
+    expect(findGroupMove(project, ['group-a', 'group-b'], 0, 5)).toBeNull()
   })
 
   it('меняет местами одинаковые аппараты при drop друг на друга', () => {

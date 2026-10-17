@@ -69,6 +69,7 @@ async function run(key: string, action: () => Promise<void> | void, successTitle
 }
 
 async function withoutSelection<T>(action: () => Promise<T> | T): Promise<T> {
+  const componentUids = [...panel.selectedComponentUids]
   const componentUid = panel.selectedComponentUid
   const wireUid = panel.selectedWireUid
   panel.clearSelection()
@@ -76,8 +77,11 @@ async function withoutSelection<T>(action: () => Promise<T> | T): Promise<T> {
   try {
     return await action()
   } finally {
-    if (componentUid) panel.selectedComponentUid = componentUid
-    if (wireUid) panel.selectedWireUid = wireUid
+    if (componentUids.length > 0) {
+      panel.selectComponents(componentUids, componentUid ?? undefined, false)
+    } else if (wireUid) {
+      panel.selectWire(wireUid)
+    }
   }
 }
 

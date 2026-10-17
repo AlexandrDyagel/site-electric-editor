@@ -27,7 +27,8 @@ import {
   MODULE_WIDTH,
   RAIL_BAR_HEIGHT,
 } from '@/config/editor'
-import { railAtWorldY, findFreeModule, findOverlapTarget } from '@/services/layoutEngine'
+import { railAtWorldY, findFreeModule, findGroupMove, findOverlapTarget } from '@/services/layoutEngine'
+import type { GroupMovePlan } from '@/services/layoutEngine'
 import { bezierPath, clamp, orthogonalPath } from '@/utils/geometry'
 import {
   NEUTRAL_COLOR,
@@ -51,6 +52,8 @@ const pointerWorld = ref({ x: 0, y: 0 })
 const hoveredTerminalUid = ref<string | null>(null)
 const spaceHeld = ref(false)
 const drag = ref<ComponentDrag | null>(null)
+const multiDrag = ref<MultiDragState | null>(null)
+const marquee = ref<MarqueeState | null>(null)
 const dropPreview = ref<DropPreview | null>(null)
 const errorTerminalUids = ref<string[]>([])
 let errorFlashTimer: ReturnType<typeof setTimeout> | null = null
@@ -83,6 +86,37 @@ interface DropPreview {
   height: number
   modules: number
   valid: boolean
+}
+
+interface MultiDragItem {
+  uid: string
+  railIndex: number
+  position: number
+  size: number
+  width: number
+  height: number
+}
+
+interface MultiDragState {
+  uids: string[]
+  items: MultiDragItem[]
+  startX: number
+  startY: number
+  startRailIndex: number
+  moved: boolean
+  deltaModules: number
+  deltaRails: number
+  plan: GroupMovePlan | null
+}
+
+interface MarqueeState {
+  startX: number
+  startY: number
+  currentX: number
+  currentY: number
+  additive: boolean
+  baseUids: string[]
+  moved: boolean
 }
 
 const ACCENT: Record<ComponentCategory, string> = {
@@ -132,6 +166,59 @@ const dragGhost = computed(() => {
   }
 })
 
+const selectedSet = computed(() => new Set(panel.selectedComponentUids))
+
+const groupBlocked = computed(() => {
+  const state = multiDrag.value
+  if (!state?.moved) return false
+  if (!state.plan) return true
+  return (
+    state.plan.deltaModules === 0 &&
+    state.plan.deltaRails === 0 &&
+    (state.deltaModules !== 0 || state.deltaRails !== 0)
+  )
+})
+
+const groupGhosts = computed(() => {
+  const state = multiDrag.value
+  if (!state?.moved) return []
+  return state.items.flatMap((item) => {
+    const target = state.plan?.positions.get(item.uid)
+    const targetIndex = item.railIndex + state.deltaRails
+    const rail = target
+      ? layout.value.rails.find((entry) => entry.id === target.railId)
+      : layout.value.rails[targetIndex]
+    if (!rail) return []
+    const position = target?.position ?? item.position + state.deltaModules
+    return [
+      {
+        uid: item.uid,
+        x: rail.x + position * MODULE_WIDTH,
+        y: rail.y - COMPONENT_HEIGHT - 16,
+        width: item.width,
+        height: item.height,
+        valid: Boolean(state.plan) && !groupBlocked.value,
+      },
+    ]
+  })
+})
+
+const marqueeRect = computed(() => {
+  const state = marquee.value
+  if (!state?.moved) return null
+  return {
+    x: Math.min(state.startX, state.currentX),
+    y: Math.min(state.startY, state.currentY),
+    width: Math.abs(state.currentX - state.startX),
+    height: Math.abs(state.currentY - state.startY),
+  }
+})
+
+function componentDimmed(uid: string): boolean {
+  if (drag.value?.moved && drag.value.uid === uid) return true
+  return Boolean(multiDrag.value?.moved && selectedSet.value.has(uid))
+}
+
 const pendingTarget = computed(() => {
   if (hoveredTerminal.value && hoveredTerminal.value.uid !== pending.value?.uid) {
     return hoveredTerminal.value
@@ -152,7 +239,8 @@ const cursorClass = computed(() => {
   if (viewport.isPanning.value) return 'cursor-grabbing'
   if (spaceHeld.value) return 'cursor-grab'
   if (pending.value) return 'cursor-crosshair'
-  if (drag.value?.moved) return 'cursor-grabbing'
+  if (drag.value?.moved || multiDrag.value?.moved) return 'cursor-grabbing'
+  if (marquee.value?.moved) return 'cursor-crosshair'
   return 'cursor-default'
 })
 
@@ -259,8 +347,65 @@ function onSvgPointerDown(event: PointerEvent): void {
   ) {
     return
   }
+  event.preventDefault()
   pending.value = null
-  panel.clearSelection()
+  const additive = event.shiftKey || event.ctrlKey || event.metaKey
+  const point = worldFromClient(event.clientX, event.clientY)
+  const baseUids = additive ? [...panel.selectedComponentUids] : []
+  if (!additive) panel.clearSelection()
+  marquee.value = {
+    startX: point.x,
+    startY: point.y,
+    currentX: point.x,
+    currentY: point.y,
+    additive,
+    baseUids,
+    moved: false,
+  }
+  window.addEventListener('pointermove', onMarqueeMove)
+  window.addEventListener('pointerup', onMarqueeEnd, { once: true })
+  window.addEventListener('pointercancel', onMarqueeEnd, { once: true })
+}
+
+function onMarqueeMove(event: PointerEvent): void {
+  const state = marquee.value
+  if (!state) return
+  const point = worldFromClient(event.clientX, event.clientY)
+  state.currentX = point.x
+  state.currentY = point.y
+  if (!state.moved && Math.hypot(point.x - state.startX, point.y - state.startY) > 4) {
+    state.moved = true
+  }
+  if (!state.moved) return
+  const rect = {
+    left: Math.min(state.startX, point.x),
+    right: Math.max(state.startX, point.x),
+    top: Math.min(state.startY, point.y),
+    bottom: Math.max(state.startY, point.y),
+  }
+  const hits = layout.value.components.filter(
+    (component) =>
+      component.x < rect.right &&
+      component.x + component.width > rect.left &&
+      component.y < rect.bottom &&
+      component.y + component.height > rect.top,
+  )
+  const next = [...new Set([...state.baseUids, ...hits.map((component) => component.placed.uid)])]
+  panel.selectComponents(next, hits[hits.length - 1]?.placed.uid ?? state.baseUids[state.baseUids.length - 1])
+}
+
+function onMarqueeEnd(): void {
+  window.removeEventListener('pointermove', onMarqueeMove)
+  window.removeEventListener('pointerup', onMarqueeEnd)
+  window.removeEventListener('pointercancel', onMarqueeEnd)
+  marquee.value = null
+}
+
+function cancelMarquee(): void {
+  window.removeEventListener('pointermove', onMarqueeMove)
+  window.removeEventListener('pointerup', onMarqueeEnd)
+  window.removeEventListener('pointercancel', onMarqueeEnd)
+  marquee.value = null
 }
 
 function onTerminalPointerDown(event: PointerEvent, terminal: LayoutTerminal): void {
@@ -300,9 +445,28 @@ function moduleAtX(worldX: number, railX: number): number {
   return Math.floor((worldX - railX) / MODULE_WIDTH)
 }
 
+function onComponentPointerDown(event: PointerEvent, component: LayoutComponent): void {
+  if (event.button !== 0 || spaceHeld.value) return
+  const additive = event.shiftKey || event.ctrlKey || event.metaKey
+  if (additive) {
+    event.preventDefault()
+    panel.toggleComponentSelection(component.placed.uid)
+    return
+  }
+  if (
+    panel.selectedComponentUids.length > 1 &&
+    panel.selectedComponentUids.includes(component.placed.uid)
+  ) {
+    startMultiComponentDrag(event, component)
+    return
+  }
+  startComponentDrag(event, component)
+}
+
 function startComponentDrag(event: PointerEvent, component: LayoutComponent): void {
   if (event.button !== 0 || spaceHeld.value) return
   event.preventDefault()
+  multiDrag.value = null
   panel.selectComponent(component.placed.uid)
   const point = worldFromClient(event.clientX, event.clientY)
   const grabModule = moduleAtX(point.x, component.rail.x)
@@ -324,6 +488,112 @@ function startComponentDrag(event: PointerEvent, component: LayoutComponent): vo
   window.addEventListener('pointermove', onComponentDragMove)
   window.addEventListener('pointerup', onComponentDragEnd)
   window.addEventListener('pointercancel', onComponentDragEnd)
+}
+
+function startMultiComponentDrag(event: PointerEvent, component: LayoutComponent): void {
+  event.preventDefault()
+  const items = panel.selectedComponentUids.flatMap((uid) => {
+    const item = componentMap.value.get(uid)
+    if (!item) return []
+    return [
+      {
+        uid,
+        railIndex: item.rail.index,
+        position: item.moduleStart,
+        size: item.def.sizeModules,
+        width: item.width,
+        height: item.height,
+      },
+    ]
+  })
+  if (items.length < 2) {
+    startComponentDrag(event, component)
+    return
+  }
+  const point = worldFromClient(event.clientX, event.clientY)
+  drag.value = null
+  multiDrag.value = {
+    uids: items.map((item) => item.uid),
+    items,
+    startX: point.x,
+    startY: point.y,
+    startRailIndex: component.rail.index,
+    moved: false,
+    deltaModules: 0,
+    deltaRails: 0,
+    plan: null,
+  }
+  window.addEventListener('pointermove', onMultiDragMove)
+  window.addEventListener('pointerup', onMultiDragEnd)
+  window.addEventListener('pointercancel', onMultiDragEnd)
+}
+
+function onMultiDragMove(event: PointerEvent): void {
+  const state = multiDrag.value
+  if (!state) return
+  const point = worldFromClient(event.clientX, event.clientY)
+  if (Math.hypot(point.x - state.startX, point.y - state.startY) > 4) state.moved = true
+  if (!state.moved) return
+  const railIndex = railAtWorldY(layout.value, point.y)
+  const rail = layout.value.rails[railIndex]
+  if (!rail) return
+  const deltaRails = railIndex - state.startRailIndex
+  const deltaModules = Math.round((point.x - state.startX) / MODULE_WIDTH)
+  const plan = findGroupMove(project.value, state.uids, deltaModules, deltaRails)
+  multiDrag.value = {
+    ...state,
+    moved: true,
+    deltaModules,
+    deltaRails,
+    plan,
+  }
+}
+
+function onMultiDragEnd(): void {
+  window.removeEventListener('pointermove', onMultiDragMove)
+  window.removeEventListener('pointerup', onMultiDragEnd)
+  window.removeEventListener('pointercancel', onMultiDragEnd)
+  const state = multiDrag.value
+  multiDrag.value = null
+  if (!state?.moved) return
+  if (!state.plan) {
+    ui.toast({
+      title: 'Не удалось переместить группу',
+      message: 'Для всех выбранных аппаратов нет свободного места с сохранением взаимного расположения.',
+      tone: 'error',
+    })
+    return
+  }
+  if (
+    state.plan.deltaModules === 0 &&
+    state.plan.deltaRails === 0 &&
+    (state.deltaModules !== 0 || state.deltaRails !== 0)
+  ) {
+    ui.toast({
+      title: 'Нет свободного места',
+      message: 'Группа не может сдвинуться в выбранном направлении.',
+      tone: 'error',
+    })
+    return
+  }
+  if (state.plan.deltaModules === 0 && state.plan.deltaRails === 0) return
+  const result = panel.moveComponents(
+    state.uids,
+    state.plan.deltaModules,
+    state.plan.deltaRails,
+  )
+  if (result.ok) {
+    ui.toast({ title: 'Группа перемещена', message: result.message, tone: 'success' })
+  } else {
+    ui.toast({ title: 'Не удалось переместить группу', message: result.message, tone: 'error' })
+  }
+}
+
+function cancelMultiDrag(): void {
+  window.removeEventListener('pointermove', onMultiDragMove)
+  window.removeEventListener('pointerup', onMultiDragEnd)
+  window.removeEventListener('pointercancel', onMultiDragEnd)
+  multiDrag.value = null
 }
 
 function onComponentDragMove(event: PointerEvent): void {
@@ -513,13 +783,17 @@ function deleteSelection(): void {
     notify(panel.removeWire(panel.selectedWireUid), 'Провод удалён')
     return
   }
-  if (panel.selectedComponentUid) {
-    notify(panel.removeComponent(panel.selectedComponentUid), 'Компонент удалён')
+  const uids = [...panel.selectedComponentUids]
+  if (uids.length > 0) {
+    notify(
+      panel.removeComponents(uids),
+      uids.length > 1 ? 'Аппараты удалены' : 'Компонент удалён',
+    )
   }
 }
 
 function duplicateSelection(): void {
-  if (!panel.selectedComponentUid) return
+  if (!panel.selectedComponentUid || panel.selectedComponentUids.length !== 1) return
   notify(panel.duplicateComponent(panel.selectedComponentUid), 'Копия создана')
 }
 
@@ -561,13 +835,20 @@ function onKeyDown(event: KeyboardEvent): void {
       window.removeEventListener('pointerup', onComponentDragEnd)
       drag.value = null
     }
+    if (multiDrag.value) cancelMultiDrag()
+    if (marquee.value) cancelMarquee()
     if (pending.value) pending.value = null
     else panel.clearSelection()
     return
   }
-  if ((event.key === 'Delete' || event.key === 'Backspace') && (panel.selectedWireUid || panel.selectedComponentUid)) {
+  if ((event.key === 'Delete' || event.key === 'Backspace') && (panel.selectedWireUid || panel.selectedComponentUids.length > 0)) {
     event.preventDefault()
     deleteSelection()
+    return
+  }
+  if (modifier && isShortcut(event, 'KeyA', 'a')) {
+    event.preventDefault()
+    panel.selectComponents(layout.value.components.map((component) => component.placed.uid))
     return
   }
   if (modifier && isShortcut(event, 'KeyZ', 'z')) {
@@ -581,7 +862,7 @@ function onKeyDown(event: KeyboardEvent): void {
     panel.redo()
     return
   }
-  if (modifier && isShortcut(event, 'KeyD', 'd') && panel.selectedComponentUid) {
+  if (modifier && isShortcut(event, 'KeyD', 'd') && panel.selectedComponentUid && panel.selectedComponentUids.length === 1) {
     event.preventDefault()
     duplicateSelection()
   }
@@ -628,6 +909,11 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', onPanEnd)
   window.removeEventListener('pointermove', onComponentDragMove)
   window.removeEventListener('pointerup', onComponentDragEnd)
+  window.removeEventListener('pointermove', onMultiDragMove)
+  window.removeEventListener('pointerup', onMultiDragEnd)
+  window.removeEventListener('pointermove', onMarqueeMove)
+  window.removeEventListener('pointerup', onMarqueeEnd)
+  window.removeEventListener('pointercancel', onMarqueeEnd)
   window.cancelAnimationFrame(rafId)
   if (errorFlashTimer) clearTimeout(errorFlashTimer)
   resizeObserver?.disconnect()
@@ -883,9 +1169,9 @@ onBeforeUnmount(() => {
               v-for="component in layout.components"
               :key="component.placed.uid"
               :data-component="component.placed.uid"
-              :opacity="drag?.uid === component.placed.uid && drag.moved ? 0.32 : 1"
+              :opacity="componentDimmed(component.placed.uid) ? 0.32 : 1"
               class="cursor-pointer"
-              @pointerdown.stop="startComponentDrag($event, component)"
+              @pointerdown.stop="onComponentPointerDown($event, component)"
             >
               <title>{{ componentName(component) }} · {{ component.def.brand }} · {{ formatRub(component.def.price) }}</title>
               <rect
@@ -896,7 +1182,7 @@ onBeforeUnmount(() => {
                 rx="3.5"
                 :fill="COMPONENT_BG[component.def.category]"
                 :stroke="
-                  panel.selectedComponentUid === component.placed.uid
+                  selectedSet.has(component.placed.uid)
                     ? '#bdfa45'
                     : componentSeverity.get(component.placed.uid) === 'error'
                       ? '#fb7185'
@@ -905,7 +1191,7 @@ onBeforeUnmount(() => {
                         : '#344356'
                 "
                 :stroke-width="
-                  panel.selectedComponentUid === component.placed.uid
+                  selectedSet.has(component.placed.uid)
                     ? 1.6
                     : componentSeverity.has(component.placed.uid)
                       ? 1.2
@@ -1113,6 +1399,49 @@ onBeforeUnmount(() => {
             </text>
           </g>
 
+          <g v-if="groupGhosts.length > 0" data-export="ignore" pointer-events="none">
+            <rect
+              v-for="ghost in groupGhosts"
+              :key="ghost.uid"
+              :x="ghost.x"
+              :y="ghost.y"
+              :width="ghost.width"
+              :height="ghost.height"
+              rx="4"
+              :fill="ghost.valid ? '#bdfa45' : '#fb7185'"
+              fill-opacity="0.09"
+              :stroke="ghost.valid ? '#bdfa45' : '#fb7185'"
+              stroke-width="1.2"
+              stroke-dasharray="4 3"
+            />
+            <text
+              :x="(groupGhosts[0]?.x ?? 0) + (groupGhosts[0]?.width ?? 0) / 2"
+              :y="(groupGhosts[0]?.y ?? 0) + (groupGhosts[0]?.height ?? 0) / 2"
+              text-anchor="middle"
+              :fill="groupBlocked ? '#fda4af' : '#d3ff80'"
+              font-family="JetBrains Mono Variable, monospace"
+              font-size="7"
+            >
+              {{ groupBlocked ? 'НЕТ МЕСТА' : `ГРУППА · ${multiDrag?.uids.length ?? 0}` }}
+            </text>
+          </g>
+
+          <rect
+            v-if="marqueeRect"
+            :x="marqueeRect.x"
+            :y="marqueeRect.y"
+            :width="marqueeRect.width"
+            :height="marqueeRect.height"
+            rx="2"
+            fill="#bdfa45"
+            fill-opacity="0.07"
+            stroke="#bdfa45"
+            stroke-width="1"
+            stroke-dasharray="5 3"
+            data-export="ignore"
+            pointer-events="none"
+          />
+
           <g v-if="dropPreview" data-export="ignore" pointer-events="none">
             <rect
               :x="dropPreview.x"
@@ -1195,14 +1524,21 @@ onBeforeUnmount(() => {
 
       <div class="pointer-events-none absolute bottom-3 left-1/2 hidden -translate-x-1/2 items-center gap-3 rounded-full border border-white/[.07] bg-ink-950/80 px-3.5 py-1.5 backdrop-blur md:flex">
         <span class="inline-flex items-center gap-1 text-[8px] text-cloud-400/60"><MousePointer2 :size="9" /> клик — выбрать</span>
+        <span class="inline-flex items-center gap-1 text-[8px] text-cloud-400/60"><BoxSelect :size="9" /> рамка / Shift — несколько</span>
         <span class="inline-flex items-center gap-1 text-[8px] text-cloud-400/60"><Hand :size="9" /> пробел / средняя кнопка — панорама</span>
         <span class="inline-flex items-center gap-1 text-[8px] text-cloud-400/60"><ZoomIn :size="9" /> колесо — зум</span>
         <span class="inline-flex items-center gap-1 text-[8px] text-cloud-400/60"><Info :size="9" /> клемма → клемма — провод</span>
       </div>
 
-      <div v-if="panel.selectedComponentUid || panel.selectedWireUid" class="absolute bottom-3 right-3 flex items-center gap-1 rounded-xl border border-white/10 bg-ink-900/95 p-1 shadow-lg backdrop-blur">
+      <div v-if="panel.selectedComponentUids.length > 0 || panel.selectedWireUid" class="absolute bottom-3 right-3 flex items-center gap-1 rounded-xl border border-white/10 bg-ink-900/95 p-1 shadow-lg backdrop-blur">
+        <span
+          v-if="panel.selectedComponentUids.length > 1"
+          class="rounded-lg bg-volt-400/10 px-2 py-1 font-mono text-[9px] font-bold text-volt-300"
+        >
+          {{ panel.selectedComponentUids.length }}
+        </span>
         <button
-          v-if="panel.selectedComponentUid"
+          v-if="panel.selectedComponentUids.length === 1"
           type="button"
           class="rounded-lg p-2 text-cloud-400 transition hover:bg-white/[.08] hover:text-white"
           title="Дублировать (Ctrl+D)"
@@ -1214,8 +1550,8 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="rounded-lg p-2 text-cloud-400 transition hover:bg-rose-500/15 hover:text-rose-300"
-          title="Удалить (Delete)"
-          aria-label="Удалить"
+          title="Удалить выбранное (Delete)"
+          aria-label="Удалить выбранное"
           @click="deleteSelection"
         >
           <Trash2 :size="13" />
