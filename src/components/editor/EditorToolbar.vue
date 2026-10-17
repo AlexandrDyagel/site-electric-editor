@@ -2,9 +2,13 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
+  CheckCircle2,
   ChevronDown,
+  ChevronRight,
+  CircleAlert,
   Download,
   Eraser,
   FilePlus2,
@@ -17,7 +21,6 @@ import {
   Undo2,
 } from 'lucide-vue-next'
 import BrandMark from '@/components/common/BrandMark.vue'
-import StatusPill from '@/components/common/StatusPill.vue'
 import { usePanelStore } from '@/stores/panelStore'
 import { useUiStore } from '@/stores/uiStore'
 import { formatRub } from '@/utils/format'
@@ -30,6 +33,7 @@ defineProps<{
 const emit = defineEmits<{
   'open-palette': []
   'open-inspector': []
+  'open-checks': []
   'new-project': []
   'clear-panel': []
   save: []
@@ -42,6 +46,20 @@ const panel = usePanelStore()
 const ui = useUiStore()
 
 const status = computed(() => panel.calculation.status)
+const checkIssues = computed(() =>
+  panel.calculation.issues.filter((issue) => issue.severity === 'error' || issue.severity === 'warning'),
+)
+const checkCount = computed(() => checkIssues.value.length)
+const checkSummary = computed(() => checkIssues.value.slice(0, 3))
+const checkButtonClass = computed(() => {
+  if (status.value === 'error') return 'border-rose-500/25 bg-rose-500/10 text-rose-200 hover:bg-rose-500/15'
+  if (status.value === 'warning') return 'border-amber-500/25 bg-amber-500/10 text-amber-200 hover:bg-amber-500/15'
+  return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15'
+})
+const checkTooltip = computed(() => {
+  if (checkCount.value === 0) return 'Проверки схемы: замечаний нет'
+  return `Проверки схемы: ${checkCount.value}. ${checkIssues.value.slice(0, 2).map((issue) => issue.title).join('; ')}`
+})
 const supplyLabel = computed(
   () =>
     `${panel.project.supply.phase === 3 ? '3Ф' : '1Ф'} · ${panel.project.supply.voltage} В · ${
@@ -129,7 +147,69 @@ function notifySave(): void {
         </button>
       </div>
 
-      <StatusPill :status="status" size="sm" class="hidden lg:inline-flex" />
+      <div class="group relative hidden lg:block">
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[10px] font-extrabold transition"
+          :class="checkButtonClass"
+          :title="checkTooltip"
+          :aria-label="`${checkTooltip}. Открыть раздел проверок`"
+          @click="emit('open-checks')"
+        >
+          <CheckCircle2 v-if="status === 'ok'" :size="12" />
+          <AlertTriangle v-else-if="status === 'warning'" :size="12" />
+          <CircleAlert v-else :size="12" />
+          Проверки
+          <span
+            v-if="checkCount > 0"
+            class="min-w-[16px] rounded-full bg-black/20 px-1 text-center font-mono text-[8px] leading-4"
+          >
+            {{ checkCount }}
+          </span>
+          <ChevronRight :size="10" class="opacity-50" />
+        </button>
+
+        <div
+          class="invisible pointer-events-none absolute left-0 top-full z-[140] mt-2 w-[310px] translate-y-1 rounded-xl border border-white/10 bg-ink-850 p-3 text-cloud-100 opacity-0 shadow-2xl transition duration-150 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100"
+          role="tooltip"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <p class="text-[10px] font-extrabold uppercase tracking-[0.13em] text-cloud-400/60">
+              Проверки схемы
+            </p>
+            <span
+              class="rounded-full px-2 py-0.5 font-mono text-[8px] font-bold"
+              :class="checkCount ? 'bg-amber-500/10 text-amber-300' : 'bg-emerald-500/10 text-emerald-300'"
+            >
+              {{ checkCount ? `${checkCount} замеч.` : 'норма' }}
+            </span>
+          </div>
+
+          <div v-if="checkCount" class="mt-2.5 space-y-2">
+            <div v-for="(issue, index) in checkSummary" :key="issue.code + '-' + index" class="flex items-start gap-2">
+              <span
+                class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full"
+                :class="issue.severity === 'error' ? 'bg-rose-400' : 'bg-amber-400'"
+              ></span>
+              <div class="min-w-0">
+                <p class="text-[10px] font-bold text-cloud-100">{{ issue.title }}</p>
+                <p class="mt-0.5 line-clamp-2 text-[9px] leading-4 text-cloud-400/70">{{ issue.message }}</p>
+              </div>
+            </div>
+            <p v-if="checkCount > 3" class="pl-3.5 text-[9px] text-cloud-400/50">
+              Ещё {{ checkCount - 3 }}…
+            </p>
+          </div>
+          <p v-else class="mt-2.5 text-[10px] leading-5 text-cloud-400/70">
+            Нагрузки, кабели и защиты согласованы. Замечаний нет.
+          </p>
+
+          <div class="mt-2.5 flex items-center justify-between border-t border-white/[.07] pt-2 text-[9px] font-bold text-volt-300">
+            Открыть раздел «Проверки»
+            <ChevronRight :size="11" />
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="flex shrink-0 items-center gap-1 sm:gap-1.5">

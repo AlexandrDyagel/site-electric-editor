@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Activity, Eraser, FilePlus2, SlidersHorizontal, X } from 'lucide-vue-next'
 import type { LoadConsumer } from '@/types'
@@ -151,6 +151,18 @@ function openClearPanel(): void {
   clearPanelOpen.value = true
 }
 
+async function openChecks(): Promise<void> {
+  paletteOpen.value = false
+  panel.activeTab = 'calc'
+  inspectorOpen.value = true
+  await nextTick()
+  window.requestAnimationFrame(() => {
+    const sections = [...document.querySelectorAll<HTMLElement>('[data-checks-section]')]
+    const visible = sections.find((element) => element.offsetParent !== null) ?? sections[0]
+    visible?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
+
 function confirmClearPanel(): void {
   if (clearingPanel.value) return
   clearingPanel.value = true
@@ -236,6 +248,7 @@ onBeforeUnmount(() => {
       @rename="openRename"
       @new-project="openNewProject"
       @clear-panel="openClearPanel"
+      @open-checks="openChecks"
     />
 
     <div class="relative flex min-h-0 flex-1">

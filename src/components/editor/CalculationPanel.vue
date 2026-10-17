@@ -328,7 +328,7 @@ function severityDot(severity: Severity): string {
         <p v-else class="mt-2 text-[9px] text-cloud-400/50">Недостаточно данных для проверки цепочки защит.</p>
       </section>
 
-      <section class="p-4">
+      <section class="scroll-mt-2 p-4" data-checks-section>
         <div class="flex items-center justify-between">
           <h3 class="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.13em] text-cloud-400">
             <AlertTriangle :size="12" /> Проверки
