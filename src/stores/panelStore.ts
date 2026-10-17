@@ -201,7 +201,12 @@ export const usePanelStore = defineStore('panel', () => {
     selectedWireUid.value = null
     activeTab.value = 'inspector'
     touch()
-    return { ok: true, message: `${def.name} добавлен на рейку` }
+    return {
+      ok: true,
+      message: result.snapped
+        ? `${def.name} размещён в ближайшем свободном окне`
+        : `${def.name} добавлен на рейку`,
+    }
   }
 
   function moveComponent(uid: string, railId: string, module: number): ActionResult {
@@ -213,7 +218,12 @@ export const usePanelStore = defineStore('panel', () => {
     }
     project.value.components = result.components
     touch()
-    return { ok: true, message: 'Компонент перемещён' }
+    return {
+      ok: true,
+      message: result.snapped
+        ? 'Ближайшее свободное окно на рейке'
+        : 'Компонент перемещён',
+    }
   }
 
   function removeComponent(uid: string): ActionResult {

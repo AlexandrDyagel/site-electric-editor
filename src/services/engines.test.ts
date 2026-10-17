@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createDemoProject } from '@/data/demo'
-import { buildLayout, reorderOnRail, terminalUid } from '@/services/layoutEngine'
+import { createDemoProject, createEmptyProject } from '@/data/demo'
+import { buildLayout, findFreeModule, placeComponentOnRail, reorderOnRail, terminalUid } from '@/services/layoutEngine'
 import { calculatePanel, currentFromPower } from '@/services/calcEngine'
 import { validateConnection } from '@/services/validationEngine'
 import { calculateAmpacity, selectCableSection } from '@/data/pue'
@@ -48,6 +48,72 @@ describe('layout engine', () => {
       if (previous && current) expect(current.moduleStart).toBeGreaterThanOrEqual(previous.moduleEnd)
     }
     expect(layoutBefore.components.length).toBe(layoutAfter.components.length)
+  })
+
+  it('ставит новое оборудование точно в точку drop на пустой рейке', () => {
+    const project = createEmptyProject()
+    const placed = {
+      uid: 'new-four-pole',
+      defId: 'br-4p-c-16',
+      dinRailId: 'rail-2',
+      position: 0,
+    }
+    const result = placeComponentOnRail(project, placed, 'rail-2', 6)
+    expect(result.ok).toBe(true)
+    expect(result.position).toBe(6)
+    expect(result.snapped).toBe(false)
+    const stored = result.components.find((item) => item.uid === placed.uid)
+    expect(stored?.position).toBe(6)
+  })
+
+  it('сохраняет свободные модули и не сдвигает соседние аппараты', () => {
+    const project = createEmptyProject()
+    project.components = [
+      { uid: 'left', defId: 'br-2p-c-16', dinRailId: 'rail-2', position: 0 },
+      { uid: 'right', defId: 'br-2p-c-16', dinRailId: 'rail-2', position: 10 },
+    ]
+    const placed = {
+      uid: 'middle',
+      defId: 'br-2p-c-16',
+      dinRailId: 'rail-2',
+      position: 0,
+    }
+    const result = placeComponentOnRail(project, placed, 'rail-2', 7)
+    expect(result.ok).toBe(true)
+    expect(result.position).toBe(7)
+    expect(result.components.find((item) => item.uid === 'left')?.position).toBe(0)
+    expect(result.components.find((item) => item.uid === 'right')?.position).toBe(10)
+  })
+
+  it('ищет ближайшее свободное окно, если точка занята', () => {
+    const project = createEmptyProject()
+    project.components = [
+      { uid: 'occupied', defId: 'br-4p-c-16', dinRailId: 'rail-3', position: 8 },
+    ]
+    expect(findFreeModule(project, 'rail-3', 8, 2)).toBe(6)
+    const placed = {
+      uid: 'new-two-pole',
+      defId: 'br-2p-c-16',
+      dinRailId: 'rail-3',
+      position: 0,
+    }
+    const result = placeComponentOnRail(project, placed, 'rail-3', 8)
+    expect(result.ok).toBe(true)
+    expect(result.position).toBe(6)
+    expect(result.snapped).toBe(true)
+    expect(result.components.find((item) => item.uid === 'occupied')?.position).toBe(8)
+  })
+
+  it('позволяет перенести аппарат в свободное место, оставив прежний модуль пустым', () => {
+    const project = createDemoProject()
+    const before = project.components.find((item) => item.uid === 'c-indicator')?.position
+    const result = reorderOnRail(project, 'c-indicator', 'rail-3', 13)
+    expect(result.ok).toBe(true)
+    expect(result.position).toBe(13)
+    const stored = result.components.find((item) => item.uid === 'c-indicator')
+    expect(stored?.position).toBe(13)
+    expect(before).toBe(11)
+    expect(result.components.find((item) => item.uid === 'bus-l')?.position).toBe(8)
   })
 })
 

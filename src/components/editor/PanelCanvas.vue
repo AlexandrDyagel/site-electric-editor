@@ -21,12 +21,13 @@ import { usePanelStore } from '@/stores/panelStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useZoomPan } from '@/composables/useZoomPan'
 import {
+  COMPONENT_GAP,
   COMPONENT_HEIGHT,
   DRAG_MIME,
   MODULE_WIDTH,
   RAIL_BAR_HEIGHT,
 } from '@/config/editor'
-import { railAtWorldY } from '@/services/layoutEngine'
+import { railAtWorldY, findFreeModule } from '@/services/layoutEngine'
 import { bezierPath, clamp, orthogonalPath } from '@/utils/geometry'
 import { PHASE_COLORS, TERMINAL_COLORS, wireColor } from '@/utils/wire'
 import { formatRub } from '@/utils/format'
@@ -59,6 +60,9 @@ interface ComponentDrag {
   module: number
   width: number
   height: number
+  modules: number
+  grabOffset: number
+  valid: boolean
 }
 
 interface DropPreview {
@@ -68,6 +72,8 @@ interface DropPreview {
   y: number
   width: number
   height: number
+  modules: number
+  valid: boolean
 }
 
 const ACCENT: Record<ComponentCategory, string> = {
@@ -111,6 +117,8 @@ const dragGhost = computed(() => {
     y: rail.y - COMPONENT_HEIGHT - 16,
     width: drag.value.width,
     height: drag.value.height,
+    modules: drag.value.modules,
+    valid: drag.value.valid,
   }
 })
 
@@ -269,11 +277,17 @@ function worldFromClient(clientX: number, clientY: number): { x: number; y: numb
   return viewport.screenToWorld(clientX, clientY, svg.getBoundingClientRect())
 }
 
+function moduleAtX(worldX: number, railX: number): number {
+  return Math.floor((worldX - railX) / MODULE_WIDTH)
+}
+
 function startComponentDrag(event: PointerEvent, component: LayoutComponent): void {
   if (event.button !== 0 || spaceHeld.value) return
   event.preventDefault()
   panel.selectComponent(component.placed.uid)
   const point = worldFromClient(event.clientX, event.clientY)
+  const grabModule = moduleAtX(point.x, component.rail.x)
+  const grabOffset = clamp(grabModule - component.moduleStart, 0, Math.max(0, component.def.sizeModules - 1))
   drag.value = {
     uid: component.placed.uid,
     startX: point.x,
@@ -283,6 +297,9 @@ function startComponentDrag(event: PointerEvent, component: LayoutComponent): vo
     module: component.moduleStart,
     width: component.width,
     height: component.height,
+    modules: component.def.sizeModules,
+    grabOffset,
+    valid: true,
   }
   window.addEventListener('pointermove', onComponentDragMove)
   window.addEventListener('pointerup', onComponentDragEnd)
@@ -300,13 +317,21 @@ function onComponentDragMove(event: PointerEvent): void {
   const rail = layout.value.rails[railIndex]
   const component = componentMap.value.get(drag.value.uid)
   if (!rail || !component) return
-  const module = clamp(
-    Math.round((point.x - rail.x) / MODULE_WIDTH),
+  const requested = clamp(
+    moduleAtX(point.x, rail.x) - drag.value.grabOffset,
     0,
     Math.max(0, rail.capacity - component.def.sizeModules),
   )
+  const free = findFreeModule(
+    project.value,
+    rail.id,
+    requested,
+    component.def.sizeModules,
+    component.placed.uid,
+  )
+  drag.value.valid = free !== null
+  drag.value.module = free ?? requested
   drag.value.railId = rail.id
-  drag.value.module = module
 }
 
 function onComponentDragEnd(): void {
@@ -316,6 +341,14 @@ function onComponentDragEnd(): void {
   const current = drag.value
   drag.value = null
   if (!current?.moved) return
+  if (!current.valid) {
+    ui.toast({
+      title: 'Нет свободного места',
+      message: 'На этой рейке нет непрерывного окна нужной ширины.',
+      tone: 'error',
+    })
+    return
+  }
   const result = panel.moveComponent(current.uid, current.railId, current.module)
   notify(result, 'Компонент перемещён')
 }
@@ -355,8 +388,13 @@ function onWindowPointerMove(event: PointerEvent): void {
 
 function onCanvasDrop(event: DragEvent): void {
   event.preventDefault()
-  const defId = event.dataTransfer?.getData(DRAG_MIME) || event.dataTransfer?.getData('text/plain') || ''
+  const defId =
+    event.dataTransfer?.getData(DRAG_MIME) ||
+    event.dataTransfer?.getData('text/plain') ||
+    ui.draggedDefId ||
+    ''
   dropPreview.value = null
+  ui.draggedDefId = null
   if (!defId) return
   const def = getComponentDef(defId)
   if (!def) {
@@ -368,7 +406,7 @@ function onCanvasDrop(event: DragEvent): void {
   const rail = layout.value.rails[railIndex]
   if (!rail) return
   const module = clamp(
-    Math.round((point.x - rail.x) / MODULE_WIDTH),
+    moduleAtX(point.x, rail.x),
     0,
     Math.max(0, rail.capacity - def.sizeModules),
   )
@@ -378,20 +416,34 @@ function onCanvasDrop(event: DragEvent): void {
 function onCanvasDragOver(event: DragEvent): void {
   if (!event.dataTransfer) return
   const types = Array.from(event.dataTransfer.types)
+  const defId =
+    ui.draggedDefId ||
+    event.dataTransfer.getData(DRAG_MIME) ||
+    event.dataTransfer.getData('text/plain')
+  const def = defId ? getComponentDef(defId) : undefined
+  if (!def) return
   if (!types.includes(DRAG_MIME) && !types.includes('text/plain')) return
   event.preventDefault()
   event.dataTransfer.dropEffect = 'copy'
   const point = worldFromClient(event.clientX, event.clientY)
   const rail = layout.value.rails[railAtWorldY(layout.value, point.y)]
   if (!rail) return
-  const module = clamp(Math.round((point.x - rail.x) / MODULE_WIDTH), 0, rail.capacity - 1)
+  const requested = clamp(
+    moduleAtX(point.x, rail.x),
+    0,
+    Math.max(0, rail.capacity - def.sizeModules),
+  )
+  const free = findFreeModule(project.value, rail.id, requested, def.sizeModules)
+  const module = free ?? requested
   dropPreview.value = {
     railId: rail.id,
     module,
     x: rail.x + module * MODULE_WIDTH,
     y: rail.y - COMPONENT_HEIGHT - 16,
-    width: MODULE_WIDTH,
+    width: def.sizeModules * MODULE_WIDTH - COMPONENT_GAP,
     height: COMPONENT_HEIGHT,
+    modules: def.sizeModules,
+    valid: free !== null,
   }
 }
 
@@ -964,21 +1016,31 @@ onBeforeUnmount(() => {
               :width="dragGhost.width"
               :height="dragGhost.height"
               rx="4"
-              fill="#bdfa45"
+              :fill="dragGhost.valid ? '#bdfa45' : '#fb7185'"
               fill-opacity="0.08"
-              stroke="#bdfa45"
+              :stroke="dragGhost.valid ? '#bdfa45' : '#fb7185'"
               stroke-width="1.2"
               stroke-dasharray="4 3"
             />
             <text
               :x="dragGhost.x + dragGhost.width / 2"
-              :y="dragGhost.y + dragGhost.height / 2"
+              :y="dragGhost.y + dragGhost.height / 2 - 3"
               text-anchor="middle"
-              fill="#d3ff80"
+              :fill="dragGhost.valid ? '#d3ff80' : '#fda4af'"
               font-family="JetBrains Mono Variable, monospace"
               font-size="7"
             >
-              ПЕРЕМЕСТИТЬ
+              {{ dragGhost.valid ? 'ПЕРЕМЕСТИТЬ' : 'НЕТ МЕСТА' }}
+            </text>
+            <text
+              :x="dragGhost.x + dragGhost.width / 2"
+              :y="dragGhost.y + dragGhost.height / 2 + 8"
+              text-anchor="middle"
+              :fill="dragGhost.valid ? '#8fb34a' : '#fb7185'"
+              font-family="JetBrains Mono Variable, monospace"
+              font-size="5.5"
+            >
+              {{ dragGhost.modules }} МОД.
             </text>
           </g>
 
@@ -989,21 +1051,31 @@ onBeforeUnmount(() => {
               :width="dropPreview.width"
               :height="dropPreview.height"
               rx="4"
-              fill="#38bdf8"
+              :fill="dropPreview.valid ? '#38bdf8' : '#fb7185'"
               fill-opacity="0.07"
-              stroke="#38bdf8"
+              :stroke="dropPreview.valid ? '#38bdf8' : '#fb7185'"
               stroke-width="1.1"
               stroke-dasharray="4 3"
             />
             <text
               :x="dropPreview.x + dropPreview.width / 2"
-              :y="dropPreview.y + dropPreview.height / 2"
+              :y="dropPreview.y + dropPreview.height / 2 - 3"
               text-anchor="middle"
-              fill="#7dd3fc"
+              :fill="dropPreview.valid ? '#7dd3fc' : '#fda4af'"
               font-family="JetBrains Mono Variable, monospace"
               font-size="6"
             >
-              DROP
+              {{ dropPreview.valid ? 'DROP' : 'НЕТ МЕСТА' }}
+            </text>
+            <text
+              :x="dropPreview.x + dropPreview.width / 2"
+              :y="dropPreview.y + dropPreview.height / 2 + 8"
+              text-anchor="middle"
+              :fill="dropPreview.valid ? '#7dd3fc' : '#fb7185'"
+              font-family="JetBrains Mono Variable, monospace"
+              font-size="5.5"
+            >
+              {{ dropPreview.modules }} МОД.
             </text>
           </g>
         </g>

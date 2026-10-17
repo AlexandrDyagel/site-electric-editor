@@ -119,12 +119,17 @@ function chooseCategory(category: ComponentCategory): void {
 
 function onDragStart(event: DragEvent, def: ComponentDef): void {
   if (!event.dataTransfer) return
+  ui.draggedDefId = def.id
   event.dataTransfer.effectAllowed = 'copy'
   event.dataTransfer.setData(DRAG_MIME, def.id)
   event.dataTransfer.setData('text/plain', def.id)
   const target = event.currentTarget as HTMLElement
   target.classList.add('opacity-60')
   window.setTimeout(() => target.classList.remove('opacity-60'), 0)
+}
+
+function onDragEnd(): void {
+  ui.draggedDefId = null
 }
 
 function addComponent(def: ComponentDef): void {
@@ -282,6 +287,7 @@ function setCurve(value: string): void {
           class="group relative flex cursor-grab items-stretch gap-2 rounded-xl border border-white/[.06] bg-white/[.025] p-2.5 transition hover:border-volt-400/25 hover:bg-white/[.045] active:cursor-grabbing"
           draggable="true"
           @dragstart="onDragStart($event, def)"
+          @dragend="onDragEnd"
         >
           <div class="flex w-4 shrink-0 items-center justify-center text-cloud-400/25 group-hover:text-cloud-400/60">
             <GripVertical :size="11" />

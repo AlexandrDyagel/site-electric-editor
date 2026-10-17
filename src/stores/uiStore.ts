@@ -10,6 +10,8 @@ export const useUiStore = defineStore('ui', () => {
   const mobileMenuOpen = ref(false)
   const paletteOpen = ref(false)
   const inspectorOpen = ref(false)
+  /** id оборудования, которое сейчас перетаскивают из библиотеки на холст. */
+  const draggedDefId = ref<string | null>(null)
   const toasts = ref<ToastMessage[]>([])
   let toastCounter = 0
 
@@ -61,6 +63,7 @@ export const useUiStore = defineStore('ui', () => {
     mobileMenuOpen,
     paletteOpen,
     inspectorOpen,
+    draggedDefId,
     toasts,
     initializeTheme,
     toggleTheme,

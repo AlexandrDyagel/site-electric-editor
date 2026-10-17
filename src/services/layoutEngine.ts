@@ -150,12 +150,71 @@ export interface ReorderResult {
   components: PlacedComponent[]
   ok: boolean
   reason?: string
+  /** Фактическая позиция после привязки к свободному окну. */
+  position?: number
+  /** true, если точная позиция была занята и выбрано ближайшее окно. */
+  snapped?: boolean
+}
+
+interface OccupiedInterval {
+  start: number
+  end: number
+}
+
+function occupiedIntervals(
+  project: PanelProject,
+  railId: string,
+  ignoreUid?: string,
+): OccupiedInterval[] {
+  return project.components
+    .filter((item) => item.dinRailId === railId && item.uid !== ignoreUid)
+    .map((item) => {
+      const size = getComponentDef(item.defId)?.sizeModules ?? 0
+      return { start: item.position, end: item.position + size }
+    })
+    .filter((interval) => interval.end > interval.start)
 }
 
 /**
- * Перестановка компонента с «уплотнением» ряда.
- * Определяем индекс вставки по целевой позиции, затем раскладываем последовательность
- * слева направо. Это даёт предсказуемое перетаскивание без наложений.
+ * Ближайшая свободная позиция для окна шириной sizeModules.
+ * Сначала проверяется точная позиция из drop, затем — соседние позиции сетки.
+ * Компоненты не сдвигаются: пользователь может оставлять свободные модули.
+ */
+export function findFreeModule(
+  project: PanelProject,
+  railId: string,
+  desiredModule: number,
+  sizeModules: number,
+  ignoreUid?: string,
+): number | null {
+  const rail = project.rails.find((item) => item.id === railId)
+  if (!rail || sizeModules <= 0) return null
+  const maxStart = rail.capacity - sizeModules
+  if (maxStart < 0) return null
+  const target = clampNumber(Math.round(desiredModule), 0, maxStart)
+  const intervals = occupiedIntervals(project, railId, ignoreUid)
+  const isFree = (position: number): boolean =>
+    position >= 0 &&
+    position <= maxStart &&
+    intervals.every((interval) => position + sizeModules <= interval.start || position >= interval.end)
+  if (isFree(target)) return target
+  for (let distance = 1; distance <= rail.capacity; distance += 1) {
+    const right = target + distance
+    if (right <= maxStart && isFree(right)) return right
+    const left = target - distance
+    if (left >= 0 && isFree(left)) return left
+  }
+  return null
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+/**
+ * Перемещение аппарата по рейке с привязкой к сетке.
+ * Точка drop имеет приоритет, если окно свободно. Иначе выбирается ближайшее
+ * свободное окно, а не начало рейки.
  */
 export function reorderOnRail(
   project: PanelProject,
@@ -170,70 +229,64 @@ export function reorderOnRail(
   if (!movingDef || !targetRail) {
     return { components: project.components, ok: false, reason: 'Рейка не найдена' }
   }
-  const others = project.components
-    .filter((item) => item.uid !== componentUid)
-    .filter((item) => item.dinRailId === targetRailId)
-    .sort((a, b) => a.position - b.position)
-  const insertionIndex = others.filter((item) => item.position < targetModule).length
-  const sequence = [...others]
-  sequence.splice(insertionIndex, 0, { ...moving, dinRailId: targetRailId })
-  let cursor = 0
-  const normalized: PlacedComponent[] = []
-  for (const item of sequence) {
-    const def = getComponentDef(item.defId)
-    if (!def) continue
-    normalized.push({ ...item, dinRailId: targetRailId, position: cursor })
-    cursor += def.sizeModules
-  }
-  if (cursor > targetRail.capacity) {
+  const requested = clampNumber(Math.round(targetModule), 0, Math.max(0, targetRail.capacity - movingDef.sizeModules))
+  const position = findFreeModule(
+    project,
+    targetRailId,
+    requested,
+    movingDef.sizeModules,
+    componentUid,
+  )
+  if (position === null) {
     return {
       components: project.components,
       ok: false,
-      reason: `Недостаточно места на рейке: нужно ${cursor} из ${targetRail.capacity} модулей`,
+      reason: `На рейке «${targetRail.name}» нет свободного окна на ${movingDef.sizeModules} модулей`,
     }
   }
-  const untouched = project.components.filter(
-    (item) => item.uid !== componentUid && item.dinRailId !== targetRailId,
-  )
-  return { components: [...untouched, ...normalized], ok: true }
+  return {
+    components: project.components.map((item) =>
+      item.uid === componentUid
+        ? { ...item, dinRailId: targetRailId, position }
+        : item,
+    ),
+    ok: true,
+    position,
+    snapped: position !== requested,
+  }
 }
 
-/** Вставка нового оборудования в указанную точку рейки. */
+/** Вставка нового оборудования в точку drop без сдвига остальных аппаратов. */
 export function placeComponentOnRail(
   project: PanelProject,
   placed: PlacedComponent,
   railId: string,
   targetModule: number,
-): { components: PlacedComponent[]; ok: boolean; reason?: string } {
+): ReorderResult {
   const rail = project.rails.find((item) => item.id === railId)
   const def = getComponentDef(placed.defId)
   if (!rail || !def) return { components: project.components, ok: false, reason: 'Рейка не найдена' }
-  const sameRail = project.components
-    .filter((item) => item.dinRailId === railId)
-    .sort((a, b) => a.position - b.position)
-  const insertionIndex = sameRail.filter((item) => item.position < targetModule).length
-  const sequence = [...sameRail]
-  sequence.splice(insertionIndex, 0, { ...placed, dinRailId: railId })
-  let cursor = 0
-  const normalized: PlacedComponent[] = []
-  for (const item of sequence) {
-    const itemDef = getComponentDef(item.defId)
-    if (!itemDef) continue
-    normalized.push({ ...item, dinRailId: railId, position: cursor })
-    cursor += itemDef.sizeModules
-  }
-  if (cursor > rail.capacity) {
+  const requested = clampNumber(Math.round(targetModule), 0, Math.max(0, rail.capacity - def.sizeModules))
+  const position = findFreeModule(project, railId, requested, def.sizeModules, placed.uid)
+  if (position === null) {
     return {
       components: project.components,
       ok: false,
-      reason: `На рейке «${rail.name}» не хватает ${cursor - rail.capacity} модулей`,
+      reason: `На рейке «${rail.name}» нет свободного окна на ${def.sizeModules} модулей`,
     }
   }
-  const untouched = project.components.filter((item) => item.dinRailId !== railId)
-  return { components: [...untouched, ...normalized], ok: true }
+  return {
+    components: [
+      ...project.components.filter((item) => item.uid !== placed.uid),
+      { ...placed, dinRailId: railId, position },
+    ],
+    ok: true,
+    position,
+    snapped: position !== requested,
+  }
 }
 
-/** Первая рейка, где хватает свободного места. */
+/** Первая рейка, где есть непрерывное свободное окно нужной ширины. */
 export function findRailForNewComponent(
   project: PanelProject,
   modules: number,
@@ -242,9 +295,8 @@ export function findRailForNewComponent(
     const used = project.components
       .filter((item) => item.dinRailId === rail.id)
       .reduce((sum, item) => sum + (getComponentDef(item.defId)?.sizeModules ?? 0), 0)
-    if (used + modules <= rail.capacity) {
-      return { railId: rail.id, position: used }
-    }
+    const position = findFreeModule(project, rail.id, used, modules)
+    if (position !== null) return { railId: rail.id, position }
   }
   return null
 }
