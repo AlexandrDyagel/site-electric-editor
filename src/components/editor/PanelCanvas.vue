@@ -536,6 +536,12 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean(element.closest('button, a, [role="button"], summary'))
 }
 
+function isShortcut(event: KeyboardEvent, code: string, key: string): boolean {
+  // event.code не зависит от раскладки: Ctrl+Z работает и в русской раскладке,
+  // где event.key приходит как «я».
+  return event.code === code || event.key.toLowerCase() === key
+}
+
 function onKeyDown(event: KeyboardEvent): void {
   // Пока открыто модальное окно, горячие клавиши холста не должны менять схему.
   if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
@@ -564,18 +570,18 @@ function onKeyDown(event: KeyboardEvent): void {
     deleteSelection()
     return
   }
-  if (modifier && event.key.toLowerCase() === 'z') {
+  if (modifier && isShortcut(event, 'KeyZ', 'z')) {
     event.preventDefault()
     if (event.shiftKey) panel.redo()
     else panel.undo()
     return
   }
-  if (modifier && event.key.toLowerCase() === 'y') {
+  if (modifier && isShortcut(event, 'KeyY', 'y')) {
     event.preventDefault()
     panel.redo()
     return
   }
-  if (modifier && event.key.toLowerCase() === 'd' && panel.selectedComponentUid) {
+  if (modifier && isShortcut(event, 'KeyD', 'd') && panel.selectedComponentUid) {
     event.preventDefault()
     duplicateSelection()
   }
