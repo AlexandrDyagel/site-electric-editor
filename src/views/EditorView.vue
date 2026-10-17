@@ -35,6 +35,7 @@ const renameOpen = ref(false)
 const renameName = ref('')
 const newProjectOpen = ref(false)
 const clearPanelOpen = ref(false)
+const clearingPanel = ref(false)
 const newProjectName = ref('Новый проект щита')
 
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null
@@ -151,18 +152,30 @@ function openClearPanel(): void {
 }
 
 function confirmClearPanel(): void {
-  const result = panel.clearPanel()
-  clearPanelOpen.value = false
-  if (!result.ok) {
-    ui.toast({ title: 'Щит уже пуст', message: result.message, tone: 'info' })
-    return
+  if (clearingPanel.value) return
+  clearingPanel.value = true
+  try {
+    const result = panel.clearPanel()
+    clearPanelOpen.value = false
+    if (!result.ok) {
+      ui.toast({ title: 'Щит уже пуст', message: result.message, tone: 'info' })
+      return
+    }
+    dirty.value = true
+    ui.toast({
+      title: 'Щит очищен',
+      message: 'Действие можно отменить через Ctrl+Z',
+      tone: 'info',
+    })
+  } catch (error) {
+    ui.toast({
+      title: 'Не удалось очистить щит',
+      message: error instanceof Error ? error.message : 'Неизвестная ошибка',
+      tone: 'error',
+    })
+  } finally {
+    clearingPanel.value = false
   }
-  dirty.value = true
-  ui.toast({
-    title: 'Щит очищен',
-    message: 'Действие можно отменить через Ctrl+Z',
-    tone: 'info',
-  })
 }
 
 function confirmRename(): void {
@@ -430,8 +443,13 @@ onBeforeUnmount(() => {
       </div>
       <template #footer>
         <button type="button" class="btn-secondary" @click="clearPanelOpen = false">Отмена</button>
-        <button type="button" class="btn-danger" @click="confirmClearPanel">
-          <Eraser :size="14" /> Очистить щит
+        <button
+          type="button"
+          class="btn-danger"
+          :disabled="clearingPanel"
+          @click.stop.prevent="confirmClearPanel"
+        >
+          <Eraser :size="14" /> {{ clearingPanel ? 'Очищаем…' : 'Очистить щит' }}
         </button>
       </template>
     </ModalPanel>

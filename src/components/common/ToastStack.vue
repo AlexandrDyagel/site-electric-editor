@@ -15,7 +15,7 @@ const toneClasses: Record<string, string> = {
 <template>
   <Teleport to="body">
     <div
-      class="pointer-events-none fixed bottom-5 right-4 z-[200] flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2 sm:right-6"
+      class="pointer-events-none fixed bottom-5 right-4 z-[90] flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2 sm:right-6"
       aria-live="polite"
     >
       <TransitionGroup
@@ -27,7 +27,7 @@ const toneClasses: Record<string, string> = {
         <div
           v-for="toast in ui.toasts"
           :key="toast.id"
-          class="pointer-events-auto flex items-start gap-3 rounded-2xl border bg-white/95 p-3.5 shadow-lift backdrop-blur-xl dark:bg-ink-850/95"
+          class="pointer-events-none flex items-start gap-3 rounded-2xl border bg-white/95 p-3.5 shadow-lift backdrop-blur-xl dark:bg-ink-850/95"
           :class="toneClasses[toast.tone]"
           role="status"
         >
@@ -43,7 +43,7 @@ const toneClasses: Record<string, string> = {
           </div>
           <button
             type="button"
-            class="rounded-md p-1 opacity-50 transition hover:opacity-100"
+            class="pointer-events-auto rounded-md p-1 opacity-50 transition hover:opacity-100"
             aria-label="Скрыть уведомление"
             @click="ui.dismissToast(toast.id)"
           >
