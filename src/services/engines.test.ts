@@ -125,7 +125,22 @@ describe('layout engine', () => {
     expect(result.components.find((item) => item.uid === 'c-qf-kitchen')?.position).toBe(6)
   })
 
-  it('перестраивает ряд, если обмен позициями невозможен из-за ширины', () => {
+  it('меняет местами аппараты разной ширины, сдвигая соседний модуль', () => {
+    const project = createEmptyProject()
+    project.components = [
+      { uid: 'four', defId: 'br-4p-c-16', dinRailId: 'rail-2', position: 0 },
+      { uid: 'three', defId: 'br-3p-c-16', dinRailId: 'rail-2', position: 4 },
+      { uid: 'single', defId: 'br-1p-c-16', dinRailId: 'rail-2', position: 7 },
+    ]
+    const result = reorderOnRail(project, 'four', 'rail-2', 4)
+    expect(result.ok).toBe(true)
+    expect(result.kind).toBe('swap')
+    expect(result.components.find((item) => item.uid === 'three')?.position).toBe(0)
+    expect(result.components.find((item) => item.uid === 'four')?.position).toBe(3)
+    expect(result.components.find((item) => item.uid === 'single')?.position).toBe(7)
+  })
+
+  it('меняет порядок при конфликте с соседними модулями', () => {
     const project = createEmptyProject()
     project.components = [
       { uid: 'wide', defId: 'br-4p-c-16', dinRailId: 'rail-2', position: 0 },
@@ -134,7 +149,7 @@ describe('layout engine', () => {
     ]
     const result = reorderOnRail(project, 'small', 'rail-2', 0)
     expect(result.ok).toBe(true)
-    expect(result.kind).toBe('reorder')
+    expect(result.kind).toBe('swap')
     const positions = result.components
       .filter((item) => item.dinRailId === 'rail-2')
       .map((item) => ({ uid: item.uid, start: item.position, end: item.position + (item.uid === 'wide' ? 4 : 1) }))

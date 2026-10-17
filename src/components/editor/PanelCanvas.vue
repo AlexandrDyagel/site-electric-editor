@@ -29,7 +29,15 @@ import {
 } from '@/config/editor'
 import { railAtWorldY, findFreeModule, findOverlapTarget } from '@/services/layoutEngine'
 import { bezierPath, clamp, orthogonalPath } from '@/utils/geometry'
-import { PHASE_COLORS, TERMINAL_COLORS, wireColor } from '@/utils/wire'
+import {
+  NEUTRAL_COLOR,
+  PE_GREEN,
+  PE_LEGEND_STYLE,
+  PE_YELLOW,
+  PHASE_COLORS,
+  TERMINAL_COLORS,
+  wireColor,
+} from '@/utils/wire'
 import { formatRub } from '@/utils/format'
 import { getComponentDef } from '@/data/library'
 
@@ -200,10 +208,19 @@ const wireViews = computed(() => {
         color: core,
         width: Math.min(4.2, 1.3 + wire.crossSection * 0.16),
         selected: panel.selectedWireUid === wire.uid,
+        striped: wire.kind === 'ground' && !wire.color,
       },
     ]
   })
 })
+
+const legendItems = [
+  { label: 'L1', color: PHASE_COLORS.L1 },
+  { label: 'L2', color: PHASE_COLORS.L2 },
+  { label: 'L3', color: PHASE_COLORS.L3 },
+  { label: 'N', color: NEUTRAL_COLOR },
+  { label: 'PE', color: PE_LEGEND_STYLE },
+]
 
 function terminalHitRadius(component: LayoutComponent): number {
   const count = component.terminals.filter((terminal) => terminal.side === 'in').length
@@ -726,6 +743,12 @@ onBeforeUnmount(() => {
             <stop offset="55%" stop-color="#647386" />
             <stop offset="100%" stop-color="#333f4d" />
           </linearGradient>
+          <linearGradient id="pe-terminal-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" :stop-color="PE_GREEN" />
+            <stop offset="49%" :stop-color="PE_GREEN" />
+            <stop offset="50%" :stop-color="PE_YELLOW" />
+            <stop offset="100%" :stop-color="PE_YELLOW" />
+          </linearGradient>
           <filter id="soft-glow" x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur stdDeviation="3" result="blur" />
             <feMerge>
@@ -814,6 +837,16 @@ onBeforeUnmount(() => {
                 stroke-linecap="round"
                 :stroke-dasharray="wireView.wire.kind === 'jumper' ? '5 3' : undefined"
                 :filter="wireView.selected ? 'url(#soft-glow)' : undefined"
+                pointer-events="none"
+              />
+              <path
+                v-if="wireView.striped"
+                :d="wireView.path"
+                fill="none"
+                :stroke="PE_YELLOW"
+                :stroke-width="wireView.width"
+                stroke-linecap="butt"
+                stroke-dasharray="5 4"
                 pointer-events="none"
               />
               <path
@@ -1112,9 +1145,9 @@ onBeforeUnmount(() => {
       </svg>
 
       <div class="pointer-events-none absolute left-3 top-3 hidden items-center gap-2 rounded-lg border border-white/10 bg-ink-950/85 px-2.5 py-1.5 backdrop-blur sm:flex">
-        <span v-for="(color, label) in { ...PHASE_COLORS, N: '#4f8cff', PE: '#a3e635' }" :key="label" class="inline-flex items-center gap-1 font-mono text-[7px] text-cloud-400">
-          <span class="h-1.5 w-5 rounded-full" :style="{ backgroundColor: color }"></span>
-          {{ label }}
+        <span v-for="item in legendItems" :key="item.label" class="inline-flex items-center gap-1 font-mono text-[7px] text-cloud-400">
+          <span class="h-1.5 w-5 rounded-full" :style="{ background: item.color }"></span>
+          {{ item.label }}
         </span>
       </div>
 

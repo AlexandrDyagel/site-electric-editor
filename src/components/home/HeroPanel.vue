@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Activity, ShieldCheck, Zap } from 'lucide-vue-next'
+import { NEUTRAL_COLOR, PE_GREEN, PHASE_COLORS } from '@/utils/wire'
 
 interface DemoModule {
   id: string
@@ -92,19 +93,19 @@ function select(id: string): void {
             preserveAspectRatio="none"
             aria-hidden="true"
           >
-            <path d="M74 30V70H496V100" stroke="#c97a3a" stroke-width="1.3" opacity=".55" />
-            <path d="M120 30V56H448V100" stroke="#66717f" stroke-width="1.3" opacity=".45" />
-            <path d="M160 30V42H400V100" stroke="#8b95a5" stroke-width="1.3" opacity=".4" />
-            <path d="M205 30V88H300V130" stroke="#4f8cff" stroke-width="1.3" opacity=".45" />
-            <path d="M74 120V162H230V190" stroke="#c97a3a" stroke-width="1.2" opacity=".35" />
-            <path d="M520 120V162H430V190" stroke="#8b95a5" stroke-width="1.2" opacity=".3" />
-            <path d="M120 222V250H300V282" stroke="#4f8cff" stroke-width="1.2" opacity=".3" />
-            <path d="M470 222V250H340V282" stroke="#a3e635" stroke-width="1.2" opacity=".3" />
-            <circle cx="300" cy="130" r="2.4" fill="#94d40d" />
-            <circle cx="230" cy="190" r="2.4" fill="#94d40d" />
-            <circle cx="430" cy="190" r="2.4" fill="#94d40d" />
-            <circle cx="300" cy="282" r="2.4" fill="#4f8cff" />
-            <circle cx="340" cy="282" r="2.4" fill="#a3e635" />
+            <path d="M74 30V70H496V100" :stroke="PHASE_COLORS.L1" stroke-width="1.3" opacity=".55" />
+            <path d="M120 30V56H448V100" :stroke="PHASE_COLORS.L2" stroke-width="1.3" opacity=".45" />
+            <path d="M160 30V42H400V100" :stroke="PHASE_COLORS.L3" stroke-width="1.3" opacity=".4" />
+            <path d="M205 30V88H300V130" :stroke="NEUTRAL_COLOR" stroke-width="1.3" opacity=".45" />
+            <path d="M74 120V162H230V190" :stroke="PHASE_COLORS.L1" stroke-width="1.2" opacity=".35" />
+            <path d="M520 120V162H430V190" :stroke="PHASE_COLORS.L3" stroke-width="1.2" opacity=".3" />
+            <path d="M120 222V250H300V282" :stroke="NEUTRAL_COLOR" stroke-width="1.2" opacity=".3" />
+            <path d="M470 222V250H340V282" :stroke="PE_GREEN" stroke-width="1.2" opacity=".3" />
+            <circle cx="300" cy="130" r="2.4" :fill="PHASE_COLORS.L1" />
+            <circle cx="230" cy="190" r="2.4" :fill="PHASE_COLORS.L1" />
+            <circle cx="430" cy="190" r="2.4" :fill="PHASE_COLORS.L3" />
+            <circle cx="300" cy="282" r="2.4" :fill="NEUTRAL_COLOR" />
+            <circle cx="340" cy="282" r="2.4" :fill="PE_GREEN" />
           </svg>
 
           <div class="relative space-y-3">

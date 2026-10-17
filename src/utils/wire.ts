@@ -1,17 +1,26 @@
 import type { PhaseTag, WireKind } from '@/types'
 
-/** Цвета проводников по ПУЭ; для тёмного холста добавлены светлые обводки. */
-export const WIRE_COLORS: Record<'phase' | 'neutral' | 'ground' | 'jumper', string> = {
-  phase: '#e2b04a',
-  neutral: '#4f8cff',
-  ground: '#a3e635',
-  jumper: '#f59e0b',
+/**
+ * Спокойная палитра проводников.
+ * L1 — жёлтый, L2 — зелёный, L3 — красный, N — синий.
+ * PE отображается двумя цветами: зелёный + жёлтый.
+ */
+export const PHASE_COLORS: Record<PhaseTag, string> = {
+  L1: '#c6ab52',
+  L2: '#6f9c63',
+  L3: '#b65c5c',
 }
 
-export const PHASE_COLORS: Record<PhaseTag, string> = {
-  L1: '#c97a3a',
-  L2: '#66717f',
-  L3: '#8b95a5',
+export const NEUTRAL_COLOR = '#4d78ae'
+export const PE_GREEN = '#7e9b4b'
+export const PE_YELLOW = '#c6b35c'
+export const JUMPER_COLOR = '#c39a4b'
+
+export const WIRE_COLORS: Record<'phase' | 'neutral' | 'ground' | 'jumper', string> = {
+  phase: PHASE_COLORS.L1,
+  neutral: NEUTRAL_COLOR,
+  ground: PE_GREEN,
+  jumper: JUMPER_COLOR,
 }
 
 export function wireColor(kind: WireKind, phase?: PhaseTag): string {
@@ -27,9 +36,12 @@ export const WIRE_KIND_LABEL: Record<WireKind, string> = {
 }
 
 export const TERMINAL_COLORS: Record<string, string> = {
-  L1: '#c97a3a',
-  L2: '#66717f',
-  L3: '#8b95a5',
-  N: '#4f8cff',
-  PE: '#a3e635',
+  L1: PHASE_COLORS.L1,
+  L2: PHASE_COLORS.L2,
+  L3: PHASE_COLORS.L3,
+  N: NEUTRAL_COLOR,
+  // Градиент объявлен в SVG-холсте редактора.
+  PE: 'url(#pe-terminal-gradient)',
 }
+
+export const PE_LEGEND_STYLE = `linear-gradient(90deg, ${PE_GREEN} 50%, ${PE_YELLOW} 50%)`

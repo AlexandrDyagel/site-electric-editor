@@ -20,6 +20,7 @@ import type { LoadConsumer, Severity } from '@/types'
 import { usePanelStore } from '@/stores/panelStore'
 import { useUiStore } from '@/stores/uiStore'
 import { formatNumber, formatPower, formatRub, pluralize } from '@/utils/format'
+import { PHASE_COLORS } from '@/utils/wire'
 
 const emit = defineEmits<{
   'add-consumer': [componentUid?: string]
@@ -46,17 +47,7 @@ const sortedIssues = computed(() =>
   [...calc.value.issues].sort((a, b) => (a.severity === 'error' ? -1 : 1) - (b.severity === 'error' ? -1 : 1)),
 )
 
-const phaseColor: Record<string, string> = {
-  L1: 'bg-amber-400',
-  L2: 'bg-slate-400',
-  L3: 'bg-sky-400',
-}
-
-const phaseText: Record<string, string> = {
-  L1: 'text-amber-300',
-  L2: 'text-slate-300',
-  L3: 'text-sky-300',
-}
+const phaseColor = PHASE_COLORS
 
 const linePower = (componentUid: string): number => {
   return project.value.consumers
@@ -201,12 +192,11 @@ function severityDot(severity: Severity): string {
         </div>
         <div class="mt-3 space-y-2.5">
           <div v-for="phase in calc.phases" :key="phase.phase" class="flex items-center gap-2.5">
-            <span class="w-5 font-mono text-[9px] font-bold" :class="phaseText[phase.phase]">{{ phase.phase }}</span>
+            <span class="w-5 font-mono text-[9px] font-bold" :style="{ color: phaseColor[phase.phase] }">{{ phase.phase }}</span>
             <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-white/[.07]">
               <div
                 class="h-full rounded-full transition-all duration-500"
-                :class="phaseColor[phase.phase]"
-                :style="{ width: `${(phase.currentA / maxPhaseCurrent) * 100}%` }"
+                :style="{ width: `${(phase.currentA / maxPhaseCurrent) * 100}%`, backgroundColor: phaseColor[phase.phase] }"
               ></div>
             </div>
             <span class="w-14 text-right font-mono text-[9px] text-cloud-300">{{ formatNumber(phase.currentA, 1) }} А</span>

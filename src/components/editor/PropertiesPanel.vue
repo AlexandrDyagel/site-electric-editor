@@ -305,9 +305,9 @@ const detailRows = computed(() => {
           <label v-if="wireKindModel === 'phase'" class="block">
             <span class="field-label !text-cloud-400">Фаза</span>
             <select v-model="wirePhaseModel" class="input !border-white/10 !bg-ink-950/60 !text-white">
-              <option value="L1">L1 — коричневый</option>
-              <option value="L2">L2 — чёрный</option>
-              <option value="L3">L3 — серый</option>
+              <option value="L1">L1 — жёлтый</option>
+              <option value="L2">L2 — зелёный</option>
+              <option value="L3">L3 — красный</option>
             </select>
           </label>
           <div class="grid grid-cols-2 gap-3">

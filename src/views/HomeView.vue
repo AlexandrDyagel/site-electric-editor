@@ -28,6 +28,7 @@ import { useLibraryStore } from '@/stores/libraryStore'
 import { usePageMeta } from '@/composables/usePageMeta'
 import { CATEGORY_META } from '@/data/library'
 import { CATEGORY_ORDER } from '@/config/editor'
+import { NEUTRAL_COLOR, PE_GREEN, PHASE_COLORS } from '@/utils/wire'
 
 const library = useLibraryStore()
 const articles = computed(() => ARTICLES.slice(0, 3))
@@ -236,9 +237,9 @@ const workflow = [
               </div>
             </div>
             <svg class="pointer-events-none absolute inset-x-0 bottom-0 h-24 w-full opacity-50" viewBox="0 0 700 100" preserveAspectRatio="none" aria-hidden="true">
-              <path d="M190 20v18c0 12 10 18 22 18h150c12 0 22 6 22 18v12" stroke="#4f8cff" stroke-width="1.4" fill="none" />
-              <path d="M330 20v10c0 14 12 20 26 20h132c14 0 26 8 26 22v14" stroke="#a3e635" stroke-width="1.4" fill="none" />
-              <path d="M450 20v40c0 14 12 22 26 22h100" stroke="#c97a3a" stroke-width="1.4" fill="none" />
+              <path d="M190 20v18c0 12 10 18 22 18h150c12 0 22 6 22 18v12" :stroke="NEUTRAL_COLOR" stroke-width="1.4" fill="none" />
+              <path d="M330 20v10c0 14 12 20 26 20h132c14 0 26 8 26 22v14" :stroke="PE_GREEN" stroke-width="1.4" fill="none" />
+              <path d="M450 20v40c0 14 12 22 26 22h100" :stroke="PHASE_COLORS.L1" stroke-width="1.4" fill="none" />
             </svg>
           </div>
 
@@ -262,13 +263,13 @@ const workflow = [
             </p>
             <div class="mt-5 space-y-3">
               <div v-for="phase in [
-                { name: 'L1', value: 78, current: '14,7 А', color: 'bg-amber-500' },
-                { name: 'L2', value: 86, current: '15,6 А', color: 'bg-slate-500' },
-                { name: 'L3', value: 74, current: '15,0 А', color: 'bg-sky-500' },
+                { name: 'L1', value: 78, current: '14,7 А', color: PHASE_COLORS.L1 },
+                { name: 'L2', value: 86, current: '15,6 А', color: PHASE_COLORS.L2 },
+                { name: 'L3', value: 74, current: '15,0 А', color: PHASE_COLORS.L3 },
               ]" :key="phase.name" class="flex items-center gap-3">
                 <span class="w-5 font-mono text-[10px] font-bold text-ink-500 dark:text-cloud-400">{{ phase.name }}</span>
                 <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-cloud-200 dark:bg-white/[.07]">
-                  <div class="h-full rounded-full transition-all duration-700" :class="phase.color" :style="{ width: `${phase.value}%` }"></div>
+                  <div class="h-full rounded-full transition-all duration-700" :style="{ width: `${phase.value}%`, backgroundColor: phase.color }"></div>
                 </div>
                 <span class="w-12 text-right font-mono text-[10px] font-semibold text-ink-600 dark:text-cloud-300">{{ phase.current }}</span>
               </div>

@@ -335,6 +335,60 @@ export function reorderOnRail(
         targetUid: target.uid,
       }
     }
+
+    // Если аппараты разной ширины, прямой обмен стартовыми позициями даёт
+    // наложение на соседний модуль. Меняем порядок двух аппаратов в ряду и
+    // пересобираем участок от более левого из них: так 4P и 3P обмениваются
+    // местами, а соседний 1P сдвигается на освободившийся модуль.
+    if (moving.dinRailId === targetRailId) {
+      const railItems = project.components
+        .filter((item) => item.dinRailId === targetRailId)
+        .sort((a, b) => a.position - b.position)
+      const movingIndex = railItems.findIndex((item) => item.uid === componentUid)
+      const targetIndex = railItems.findIndex((item) => item.uid === target.uid)
+      if (movingIndex >= 0 && targetIndex >= 0) {
+        const reordered = [...railItems]
+        const movingItem = reordered[movingIndex]
+        const targetItem = reordered[targetIndex]
+        if (movingItem && targetItem) {
+          reordered[movingIndex] = targetItem
+          reordered[targetIndex] = movingItem
+          const anchorIndex = Math.min(movingIndex, targetIndex)
+          const anchorPosition = railItems[anchorIndex]?.position ?? 0
+          const placeFrom = (startPosition: number, fromIndex: number): Map<string, number> | null => {
+            const placements = new Map<string, number>()
+            let cursor = startPosition
+            for (let index = fromIndex; index < reordered.length; index += 1) {
+              const item = reordered[index]
+              if (!item) continue
+              placements.set(item.uid, cursor)
+              cursor += componentSize(item)
+            }
+            return cursor <= targetRail.capacity ? placements : null
+          }
+          const placements =
+            placeFrom(anchorPosition, anchorIndex) ??
+            placeFrom(0, 0)
+          if (placements) {
+            const sequenceSwapped = project.components.map((item) => {
+              const position = placements.get(item.uid)
+              return position === undefined ? item : { ...item, dinRailId: targetRailId, position }
+            })
+            if (validRailPlacement(sequenceSwapped, project.rails)) {
+              const position = placements.get(componentUid) ?? target.position
+              return {
+                components: sequenceSwapped,
+                ok: true,
+                position,
+                snapped: false,
+                kind: 'swap',
+                targetUid: target.uid,
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   // Резервный сценарий для аппаратов разной ширины: вставляем в позицию
