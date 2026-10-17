@@ -240,7 +240,11 @@ export interface RcdCalculation {
   issues: CalculationIssue[]
 }
 
+export type SelectivityKind = 'overcurrent' | 'residual'
+
 export interface SelectivityCheck {
+  kind: SelectivityKind
+  unit: 'A' | 'mA'
   downstreamUid: string
   upstreamUid: string
   downstreamName: string

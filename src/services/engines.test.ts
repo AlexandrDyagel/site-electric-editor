@@ -165,6 +165,145 @@ describe('layout engine', () => {
     expect(findGroupMove(project, ['group-a', 'group-b'], 0, 5)).toBeNull()
   })
 
+  it('сравнивает с ближайшей защитой, а не с самым близким номиналом', () => {
+    const project = createEmptyProject()
+    project.components = [
+      { uid: 'selectivity-main', defId: 'main-breaker-4p-40', dinRailId: 'rail-1', position: 0 },
+      { uid: 'selectivity-sub', defId: 'br-3p-c-25', dinRailId: 'rail-1', position: 4 },
+      { uid: 'selectivity-line', defId: 'br-1p-c-16', dinRailId: 'rail-2', position: 0 },
+    ]
+    project.wires = [
+      {
+        uid: 'selectivity-wire-1',
+        from: terminalUid('selectivity-main', 'out', 'L1', 0),
+        to: terminalUid('selectivity-sub', 'in', 'L1', 0),
+        kind: 'phase',
+        phase: 'L1',
+        crossSection: 10,
+      },
+      {
+        uid: 'selectivity-wire-2',
+        from: terminalUid('selectivity-sub', 'out', 'L1', 0),
+        to: terminalUid('selectivity-line', 'in', 'L1', 0),
+        kind: 'phase',
+        phase: 'L1',
+        crossSection: 2.5,
+      },
+    ]
+    const calc = calculatePanel(project, buildLayout(project))
+    const lineCheck = calc.selectivity.find(
+      (check) => check.kind === 'overcurrent' && check.downstreamUid === 'selectivity-line',
+    )
+    const subCheck = calc.selectivity.find(
+      (check) => check.kind === 'overcurrent' && check.downstreamUid === 'selectivity-sub',
+    )
+    expect(lineCheck?.upstreamUid).toBe('selectivity-sub')
+    expect(lineCheck?.status).toBe('warning')
+    expect(lineCheck?.ratio).toBe(1.56)
+    expect(subCheck?.upstreamUid).toBe('selectivity-main')
+  })
+
+  it('проверяет селективность УЗО по уставке утечки', () => {
+    const project = createDemoProject()
+    const rcd = project.components.find((component) => component.uid === 'c-rcd')
+    expect(rcd).toBeDefined()
+    if (rcd) rcd.defId = 'rcd-4p-40-30'
+    const calc = calculatePanel(project, buildLayout(project))
+    const check = calc.selectivity.find(
+      (item) => item.kind === 'residual' && item.downstreamUid === 'c-qf-bath',
+    )
+    expect(check).toBeDefined()
+    expect(check?.upstreamUid).toBe('c-rcd')
+    expect(check?.unit).toBe('mA')
+    expect(check?.downstreamRating).toBe(30)
+    expect(check?.upstreamRating).toBe(30)
+    expect(check?.status).toBe('error')
+  })
+
+  it('помечает УЗО с недостаточным временем/типом как требующее проверки', () => {
+    const project = createDemoProject()
+    const calc = calculatePanel(project, buildLayout(project))
+    const check = calc.selectivity.find(
+      (item) => item.kind === 'residual' && item.downstreamUid === 'c-qf-bath',
+    )
+    expect(check).toBeDefined()
+    expect(check?.upstreamUid).toBe('c-rcd')
+    expect(check?.ratio).toBe(3.33)
+    expect(check?.status).toBe('warning')
+  })
+
+  it('предупреждает, если нижестоящая кривая медленнее вышестоящей', () => {
+    const project = createEmptyProject()
+    project.components = [
+      { uid: 'curve-main', defId: 'main-breaker-4p-40', dinRailId: 'rail-1', position: 0 },
+      { uid: 'curve-sub', defId: 'br-3p-c-25', dinRailId: 'rail-1', position: 4 },
+      { uid: 'curve-line', defId: 'br-1p-d-10', dinRailId: 'rail-2', position: 0 },
+    ]
+    project.wires = [
+      {
+        uid: 'curve-wire-1',
+        from: terminalUid('curve-main', 'out', 'L1', 0),
+        to: terminalUid('curve-sub', 'in', 'L1', 0),
+        kind: 'phase',
+        phase: 'L1',
+        crossSection: 10,
+      },
+      {
+        uid: 'curve-wire-2',
+        from: terminalUid('curve-sub', 'out', 'L1', 0),
+        to: terminalUid('curve-line', 'in', 'L1', 0),
+        kind: 'phase',
+        phase: 'L1',
+        crossSection: 2.5,
+      },
+    ]
+    const calc = calculatePanel(project, buildLayout(project))
+    const check = calc.selectivity.find(
+      (item) => item.kind === 'overcurrent' && item.downstreamUid === 'curve-line',
+    )
+    expect(check?.ratio).toBe(2.5)
+    expect(check?.status).toBe('warning')
+    expect(check?.message).toContain('D→C')
+  })
+
+  it('не использует УЗО как вышестоящую защиту от сверхтока', () => {
+    const project = createDemoProject()
+    const calc = calculatePanel(project, buildLayout(project))
+    const check = calc.selectivity.find(
+      (item) => item.kind === 'overcurrent' && item.downstreamUid === 'c-qf-bath',
+    )
+    expect(check?.upstreamUid).toBe('c-main')
+    expect(check?.upstreamRating).toBe(40)
+  })
+
+  it('использует вводной автомат проекта, если физической защиты выше нет', () => {
+    const project = createEmptyProject()
+    project.components = [
+      { uid: 'virtual-line', defId: 'br-1p-c-16', dinRailId: 'rail-2', position: 0 },
+    ]
+    project.consumers = [
+      {
+        uid: 'virtual-load',
+        name: 'Нагрузка',
+        wireUidOrTerminalUid: terminalUid('virtual-line', 'out', 'L1', 0),
+        powerW: 2000,
+        cosPhi: 0.95,
+        utilization: 0.8,
+        phase: 1,
+        phaseLine: 'L1',
+        loadType: 'active',
+      },
+    ]
+    const calc = calculatePanel(project, buildLayout(project))
+    const check = calc.selectivity.find(
+      (item) => item.kind === 'overcurrent' && item.downstreamUid === 'virtual-line',
+    )
+    expect(check).toBeDefined()
+    expect(check?.upstreamUid).toBe('virtual-main')
+    expect(check?.upstreamRating).toBe(40)
+    expect(check?.status).toBe('ok')
+  })
+
   it('меняет местами одинаковые аппараты при drop друг на друга', () => {
     const project = createDemoProject()
     const result = reorderOnRail(project, 'c-qf-light', 'rail-2', 7)

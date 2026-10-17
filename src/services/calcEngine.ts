@@ -19,6 +19,7 @@ import { calculateAmpacity, selectCableSection, voltageDropPct } from '@/data/pu
 import {
   buildWiringGraph,
   findUpstreamComponents,
+  findUpstreamDistances,
   isRcd,
   validateProject,
 } from '@/services/validationEngine'
@@ -333,8 +334,7 @@ function buildRcdCalculations(
   lines: LineCalculation[],
   consumersByLine: Map<string, ResolvedConsumer[]>,
   upstreamCache: Map<string, Set<string>>,
-): RcdCalculation[] {
-  const result: RcdCalculation[] = []
+): RcdCalculation[] {  const result: RcdCalculation[] = []
   const rcds = layout.components.filter((component) => isRcd(component.def))
   for (const rcd of rcds) {
     const downstreamLines = lines.filter((line) => {
@@ -397,96 +397,176 @@ function buildRcdCalculations(
   return result
 }
 
-function findUpstreamProtective(
-  project: PanelProject,
+function virtualMainDef(project: PanelProject): ComponentDef | null {
+  if (!project.supply.mainBreaker) return null
+  return {
+    id: 'virtual-main',
+    name: `Вводной автомат ${project.supply.mainBreaker} А`,
+    shortName: 'QF ввод',
+    category: 'input',
+    brand: '—',
+    series: '—',
+    poles: project.supply.phase === 3 ? 4 : 2,
+    ratedCurrent: project.supply.mainBreaker,
+    tripCurve: project.supply.mainBreakerCurve ?? 'C',
+    terminals: [],
+    price: 0,
+    sizeModules: project.supply.phase === 3 ? 4 : 2,
+    description: '',
+    protective: true,
+  }
+}
+
+function nearestUpstream(
   layout: PanelLayout,
-  line: LayoutComponent,
-  upstreamIds: Set<string>,
-): { def: ComponentDef; uid: string } | null {
-  const candidates = layout.components
-    .filter(
-      (component) =>
-        upstreamIds.has(component.placed.uid) &&
-        component.def.protective &&
-        (component.def.ratedCurrent ?? 0) > 0,
-    )
-    .sort((a, b) => (a.def.ratedCurrent ?? 0) - (b.def.ratedCurrent ?? 0))
-  const downstreamRating = line.def.ratedCurrent ?? 0
-  const higher = candidates.find((component) => (component.def.ratedCurrent ?? 0) >= downstreamRating)
-  const chosen = higher ?? candidates[candidates.length - 1]
-  if (chosen) return { def: chosen.def, uid: chosen.placed.uid }
-  if (project.supply.mainBreaker) {
-    return {
-      def: {
-        id: 'virtual-main',
-        name: `Вводной автомат ${project.supply.mainBreaker} А`,
-        shortName: 'QF ввод',
-        category: 'input',
-        brand: '—',
-        series: '—',
-        poles: project.supply.phase === 3 ? 4 : 2,
-        ratedCurrent: project.supply.mainBreaker,
-        tripCurve: project.supply.mainBreakerCurve ?? 'C',
-        terminals: [],
-        price: 0,
-        sizeModules: project.supply.phase === 3 ? 4 : 2,
-        description: '',
-        protective: true,
-      },
-      uid: 'virtual-main',
+  distances: Map<string, number>,
+  predicate: (component: LayoutComponent) => boolean,
+): LayoutComponent | null {
+  let best: LayoutComponent | null = null
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (const candidate of layout.components) {
+    const distance = distances.get(candidate.placed.uid)
+    if (distance === undefined || !predicate(candidate)) continue
+    if (distance < bestDistance) {
+      best = candidate
+      bestDistance = distance
     }
   }
-  return null
+  return best
+}
+
+function overcurrentSelectivity(
+  downstream: LayoutComponent,
+  upstream: { def: ComponentDef; uid: string },
+): SelectivityCheck | null {
+  const downstreamRating = downstream.def.ratedCurrent ?? 0
+  const upstreamRating = upstream.def.ratedCurrent ?? 0
+  if (downstreamRating <= 0 || upstreamRating <= 0) return null
+  const ratio = upstreamRating / downstreamRating
+  let status: Severity = 'ok'
+  let message = `Запас по номиналу ${upstreamRating} А / ${downstreamRating} А = ×${ratio.toFixed(2)}`
+  if (downstreamRating >= upstreamRating) {
+    status = 'error'
+    message = `Нижестоящий автомат ${downstreamRating} А не меньше вышестоящего ${upstreamRating} А`
+  } else if (ratio < 1.6) {
+    status = 'warning'
+    message = `Запас по номиналу ${ratio.toFixed(2)} меньше рекомендуемых 1,6`
+  }
+  const downstreamCurve = downstream.def.tripCurve ?? 'C'
+  const upstreamCurve = upstream.def.tripCurve ?? 'C'
+  if (
+    status !== 'error' &&
+    curveRank(downstreamCurve) > curveRank(upstreamCurve) &&
+    upstream.def.id !== 'virtual-main'
+  ) {
+    status = 'warning'
+    message += `; кривые ${downstreamCurve}→${upstreamCurve} требуют проверки по время-токовым характеристикам`
+  }
+  return {
+    kind: 'overcurrent',
+    unit: 'A',
+    downstreamUid: downstream.placed.uid,
+    upstreamUid: upstream.uid,
+    downstreamName: downstream.placed.customName ?? downstream.def.name,
+    upstreamName: upstream.def.name,
+    downstreamRating,
+    upstreamRating,
+    ratio: Number(ratio.toFixed(2)),
+    status,
+    message,
+  }
+}
+
+function residualSelectivity(
+  downstream: LayoutComponent,
+  upstream: LayoutComponent,
+): SelectivityCheck | null {
+  const downstreamRating = downstream.def.residualCurrent ?? 0
+  const upstreamRating = upstream.def.residualCurrent ?? 0
+  if (downstreamRating <= 0 || upstreamRating <= 0) return null
+  const ratio = upstreamRating / downstreamRating
+  let status: Severity = 'ok'
+  let message = `Уставки ${downstreamRating} мА / ${upstreamRating} мА = ×${ratio.toFixed(2)}`
+  if (upstreamRating <= downstreamRating) {
+    status = 'error'
+    message = `Вышестоящее УЗО ${upstreamRating} мА не грубее нижестоящего ${downstreamRating} мА — селективности по утечке нет`
+  } else if (ratio < 3) {
+    status = 'warning'
+    message = `Запас по уставке ${ratio.toFixed(2)} меньше рекомендуемых 3×`
+  } else {
+    // Соотношение по току утечки есть, но тип S/выдержка времени в модели не заданы.
+    status = 'warning'
+    message = `Запас по уставке ×${ratio.toFixed(2)}; выдержка времени/тип S не подтверждены — проверьте по паспорту`
+  }
+  return {
+    kind: 'residual',
+    unit: 'mA',
+    downstreamUid: downstream.placed.uid,
+    upstreamUid: upstream.placed.uid,
+    downstreamName: downstream.placed.customName ?? downstream.def.name,
+    upstreamName: upstream.placed.customName ?? upstream.def.name,
+    downstreamRating,
+    upstreamRating,
+    ratio: Number(ratio.toFixed(2)),
+    status,
+    message,
+  }
 }
 
 function buildSelectivity(
   project: PanelProject,
   layout: PanelLayout,
   lines: LineCalculation[],
-  upstreamCache: Map<string, Set<string>>,
+  upstreamDistances: Map<string, Map<string, number>>,
 ): SelectivityCheck[] {
   const checks: SelectivityCheck[] = []
-  for (const line of lines) {
-    const component = layout.components.find((item) => item.placed.uid === line.componentUid)
-    const upstreamIds = upstreamCache.get(line.componentUid)
-    if (!component || !upstreamIds) continue
-    const upstream = findUpstreamProtective(project, layout, component, upstreamIds)
-    if (!upstream || !upstream.def.ratedCurrent) continue
-    const upstreamRating = upstream.def.ratedCurrent
-    const downstreamRating = line.ratedCurrent
-    const ratio = downstreamRating > 0 ? upstreamRating / downstreamRating : 0
-    let status: Severity = 'ok'
-    let message = `Соотношение ${upstreamRating} А / ${downstreamRating} А = ${ratio.toFixed(2)} — селективность обеспечена`
-    if (downstreamRating >= upstreamRating) {
-      status = 'error'
-      message = `Нижестоящий автомат ${downstreamRating} А не меньше вышестоящего ${upstreamRating} А`
-    } else if (ratio < 1.6) {
-      status = 'warning'
-      message = `Запас селективности ${ratio.toFixed(2)} меньше рекомендуемых 1,6`
-    }
-    const downstreamCurve = line.tripCurve ?? 'C'
-    const upstreamCurve = upstream.def.tripCurve ?? 'C'
-    if (
-      status !== 'error' &&
-      curveRank(downstreamCurve) > curveRank(upstreamCurve) &&
-      upstream.def.id !== 'virtual-main'
-    ) {
-      status = 'warning'
-      message += `; кривые ${downstreamCurve}→${upstreamCurve} требуют проверки по время-токовым характеристикам`
-    }
-    checks.push({
-      downstreamUid: line.componentUid,
-      upstreamUid: upstream.uid,
-      downstreamName: line.name,
-      upstreamName: upstream.def.name,
-      downstreamRating,
-      upstreamRating,
-      ratio: Number(ratio.toFixed(2)),
-      status,
-      message,
-    })
+  const seen = new Set<string>()
+  const lineUids = new Set(lines.map((line) => line.componentUid))
+  const virtualMain = virtualMainDef(project)
+
+  const addCheck = (check: SelectivityCheck | null): void => {
+    if (!check) return
+    const key = `${check.kind}:${check.downstreamUid}:${check.upstreamUid}`
+    if (seen.has(key)) return
+    seen.add(key)
+    checks.push(check)
   }
-  return checks
+
+  for (const downstream of layout.components) {
+    const distances = upstreamDistances.get(downstream.placed.uid)
+    if (!distances) continue
+
+    if (downstream.def.protective && (downstream.def.ratedCurrent ?? 0) > 0) {
+      const upstream = nearestUpstream(
+        layout,
+        distances,
+        (component) =>
+          Boolean(component.def.protective) && (component.def.ratedCurrent ?? 0) > 0,
+      )
+      if (upstream) {
+        addCheck(overcurrentSelectivity(downstream, { def: upstream.def, uid: upstream.placed.uid }))
+      } else if (lineUids.has(downstream.placed.uid) && virtualMain) {
+        addCheck(overcurrentSelectivity(downstream, { def: virtualMain, uid: 'virtual-main' }))
+      }
+    }
+
+    if (isRcd(downstream.def) && (downstream.def.residualCurrent ?? 0) > 0) {
+      const upstream = nearestUpstream(
+        layout,
+        distances,
+        (component) =>
+          isRcd(component.def) && (component.def.residualCurrent ?? 0) > 0,
+      )
+      if (upstream) addCheck(residualSelectivity(downstream, upstream))
+    }
+  }
+
+  return checks.sort((a, b) => {
+    const severity = severityRank(b.status) - severityRank(a.status)
+    if (severity !== 0) return severity
+    if (a.kind !== b.kind) return a.kind === 'overcurrent' ? -1 : 1
+    return a.downstreamName.localeCompare(b.downstreamName, 'ru')
+  })
 }
 
 /**
@@ -496,8 +576,11 @@ function buildSelectivity(
 export function calculatePanel(project: PanelProject, layout: PanelLayout): CalculationResult {
   const { items, byLine } = resolveAllConsumers(project, layout)
   const upstreamCache = new Map<string, Set<string>>()
+  const upstreamDistances = new Map<string, Map<string, number>>()
   for (const component of layout.components) {
-    upstreamCache.set(component.placed.uid, findUpstreamComponents(project, layout, component.placed.uid))
+    const distances = findUpstreamDistances(project, layout, component.placed.uid)
+    upstreamDistances.set(component.placed.uid, distances)
+    upstreamCache.set(component.placed.uid, new Set(distances.keys()))
   }
   const lines: LineCalculation[] = []
   for (const [lineUid, consumers] of byLine) {
@@ -525,16 +608,24 @@ export function calculatePanel(project: PanelProject, layout: PanelLayout): Calc
     totalApparentPowerVa > 0 ? Number((totalCalculatedPowerW / totalApparentPowerVa).toFixed(3)) : 1
   const phaseResult = buildPhaseCalculations(project, items)
   const rcds = buildRcdCalculations(layout, lines, byLine, upstreamCache)
-  const selectivity = buildSelectivity(project, layout, lines, upstreamCache)
+  const selectivity = buildSelectivity(project, layout, lines, upstreamDistances)
   const issues: CalculationIssue[] = [...validateProject(project, layout)]
   for (const line of lines) issues.push(...line.issues)
   for (const rcd of rcds) issues.push(...rcd.issues)
   for (const check of selectivity) {
     if (check.status === 'ok') continue
+    const residual = check.kind === 'residual'
     issues.push({
-      code: 'SELECTIVITY',
+      code: residual ? 'SELECTIVITY_RCD' : 'SELECTIVITY',
       severity: check.status,
-      title: check.status === 'error' ? 'Нарушена селективность' : 'Селективность под вопросом',
+      title:
+        check.status === 'error'
+          ? residual
+            ? 'Нарушена селективность УЗО'
+            : 'Нарушена селективность'
+          : residual
+            ? 'Селективность УЗО под вопросом'
+            : 'Селективность под вопросом',
       message: `${check.downstreamName} → ${check.upstreamName}: ${check.message}`,
       componentUid: check.downstreamUid,
     })

@@ -316,12 +316,23 @@ function severityDot(severity: Severity): string {
         <h3 class="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.13em] text-cloud-400">
           <ArrowDownToLine :size="12" /> Селективность
         </h3>
+        <p class="mt-1 text-[8px] leading-4 text-cloud-400/40">
+          Оценка по номиналу и уставке утечки. Точную селективность проверяют по время-токовым кривым производителя.
+        </p>
         <div v-if="calc.selectivity.length" class="mt-2 space-y-1.5">
-          <div v-for="check in calc.selectivity" :key="`${check.downstreamUid}-${check.upstreamUid}`" class="flex items-start gap-2 rounded-lg border border-white/[.05] px-2 py-1.5">
+          <div
+            v-for="check in calc.selectivity"
+            :key="`${check.kind}-${check.downstreamUid}-${check.upstreamUid}`"
+            class="flex items-start gap-2 rounded-lg border border-white/[.05] px-2 py-1.5"
+            :title="check.message"
+          >
             <span class="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full" :class="severityDot(check.status)"></span>
             <div class="min-w-0 flex-1">
               <p class="truncate text-[8.5px] font-semibold text-cloud-300">{{ check.downstreamName }} → {{ check.upstreamName }}</p>
-              <p class="mt-0.5 font-mono text-[7.5px] text-cloud-400/40">{{ check.downstreamRating }} А / {{ check.upstreamRating }} А = ×{{ check.ratio }}</p>
+              <p class="mt-0.5 font-mono text-[7.5px] text-cloud-400/40">
+                <span class="mr-1 text-cloud-400/60">{{ check.kind === 'residual' ? 'УЗО' : 'сверхток' }}</span>
+                {{ check.downstreamRating }} {{ check.unit === 'mA' ? 'мА' : 'А' }} / {{ check.upstreamRating }} {{ check.unit === 'mA' ? 'мА' : 'А' }} = ×{{ check.ratio }}
+              </p>
             </div>
           </div>
         </div>

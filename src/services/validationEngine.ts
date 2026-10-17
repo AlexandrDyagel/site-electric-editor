@@ -52,21 +52,42 @@ export function findUpstreamComponents(
   layout: PanelLayout,
   componentUid: string,
 ): Set<string> {
+  return new Set(findUpstreamDistances(project, layout, componentUid).keys())
+}
+
+/**
+ * То же обход, но с расстоянием до аппарата. Ближайшая защита — это минимальное
+ * расстояние, а не минимальный номинал: именно она стоит непосредственно выше
+ * по цепи и должна участвовать в проверке селективности.
+ */
+export function findUpstreamDistances(
+  project: PanelProject,
+  layout: PanelLayout,
+  componentUid: string,
+): Map<string, number> {
   const graph = buildWiringGraph(project, layout)
   const startTerminals = (graph.componentTerminals.get(componentUid) ?? []).filter(
     (terminal) => terminal.side === 'in',
   )
-  const queue: string[] = startTerminals.map((terminal) => terminal.uid)
-  const visitedTerminals = new Set<string>()
-  const upstream = new Set<string>()
+  const queue: Array<{ terminalUid: string; depth: number }> = startTerminals.map((terminal) => ({
+    terminalUid: terminal.uid,
+    depth: 0,
+  }))
+  const visitedTerminals = new Map<string, number>()
+  const distances = new Map<string, number>()
   while (queue.length > 0) {
-    const current = queue.shift()
-    if (!current || visitedTerminals.has(current)) continue
-    visitedTerminals.add(current)
-    const terminal = graph.terminals.get(current)
+    const entry = queue.shift()
+    if (!entry) continue
+    const previousDepth = visitedTerminals.get(entry.terminalUid)
+    if (previousDepth !== undefined && previousDepth <= entry.depth) continue
+    visitedTerminals.set(entry.terminalUid, entry.depth)
+    const terminal = graph.terminals.get(entry.terminalUid)
     if (!terminal) continue
     if (terminal.side === 'out' && terminal.componentUid !== componentUid) {
-      upstream.add(terminal.componentUid)
+      const known = distances.get(terminal.componentUid)
+      if (known === undefined || entry.depth < known) {
+        distances.set(terminal.componentUid, entry.depth)
+      }
     }
     /*
      * Провод от выходной клеммы ведёт вниз по цепи к потребителям. Чтобы не
@@ -78,23 +99,29 @@ export function findUpstreamComponents(
         (item) => item.side === 'in' && item.kind === terminal.kind,
       )
       for (const internal of internals) {
-        if (!visitedTerminals.has(internal.uid)) queue.push(internal.uid)
+        const known = visitedTerminals.get(internal.uid)
+        if (known === undefined || known > entry.depth) {
+          queue.push({ terminalUid: internal.uid, depth: entry.depth })
+        }
       }
       continue
     }
-    const connectedWires = graph.wiresByTerminal.get(current) ?? []
+    const connectedWires = graph.wiresByTerminal.get(entry.terminalUid) ?? []
     for (const wire of connectedWires) {
-      const nextUid = wire.from === current ? wire.to : wire.from
-      if (visitedTerminals.has(nextUid)) continue
+      const nextUid = wire.from === entry.terminalUid ? wire.to : wire.from
       const nextTerminal = graph.terminals.get(nextUid)
       if (!nextTerminal) continue
       if (nextTerminal.componentUid === componentUid) continue
       // Другой вход — это ответвление вниз, а не питающая цепь.
       if (nextTerminal.side !== 'out') continue
-      queue.push(nextUid)
+      const nextDepth = entry.depth + 1
+      const known = visitedTerminals.get(nextUid)
+      if (known === undefined || known > nextDepth) {
+        queue.push({ terminalUid: nextUid, depth: nextDepth })
+      }
     }
   }
-  return upstream
+  return distances
 }
 
 export function upstreamDefs(
