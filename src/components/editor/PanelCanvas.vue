@@ -27,7 +27,7 @@ import {
   MODULE_WIDTH,
   RAIL_BAR_HEIGHT,
 } from '@/config/editor'
-import { railAtWorldY, findFreeModule } from '@/services/layoutEngine'
+import { railAtWorldY, findFreeModule, findOverlapTarget } from '@/services/layoutEngine'
 import { bezierPath, clamp, orthogonalPath } from '@/utils/geometry'
 import { PHASE_COLORS, TERMINAL_COLORS, wireColor } from '@/utils/wire'
 import { formatRub } from '@/utils/format'
@@ -63,6 +63,7 @@ interface ComponentDrag {
   modules: number
   grabOffset: number
   valid: boolean
+  mode: 'free' | 'swap' | 'invalid'
 }
 
 interface DropPreview {
@@ -119,6 +120,7 @@ const dragGhost = computed(() => {
     height: drag.value.height,
     modules: drag.value.modules,
     valid: drag.value.valid,
+    mode: drag.value.mode,
   }
 })
 
@@ -300,6 +302,7 @@ function startComponentDrag(event: PointerEvent, component: LayoutComponent): vo
     modules: component.def.sizeModules,
     grabOffset,
     valid: true,
+    mode: 'free',
   }
   window.addEventListener('pointermove', onComponentDragMove)
   window.addEventListener('pointerup', onComponentDragEnd)
@@ -329,9 +332,32 @@ function onComponentDragMove(event: PointerEvent): void {
     component.def.sizeModules,
     component.placed.uid,
   )
-  drag.value.valid = free !== null
-  drag.value.module = free ?? requested
+  const overlapTarget = findOverlapTarget(
+    project.value,
+    rail.id,
+    requested,
+    component.def.sizeModules,
+    component.placed.uid,
+  )
   drag.value.railId = rail.id
+  if (free === requested) {
+    drag.value.valid = true
+    drag.value.mode = 'free'
+    drag.value.module = requested
+  } else if (overlapTarget) {
+    // При drop на занятое место показываем обмен местами с этим аппаратом.
+    drag.value.valid = true
+    drag.value.mode = 'swap'
+    drag.value.module = overlapTarget.position
+  } else if (free !== null) {
+    drag.value.valid = true
+    drag.value.mode = 'free'
+    drag.value.module = free
+  } else {
+    drag.value.valid = false
+    drag.value.mode = 'invalid'
+    drag.value.module = requested
+  }
 }
 
 function onComponentDragEnd(): void {
@@ -350,7 +376,11 @@ function onComponentDragEnd(): void {
     return
   }
   const result = panel.moveComponent(current.uid, current.railId, current.module)
-  notify(result, 'Компонент перемещён')
+  if (result.ok) {
+    ui.toast({ title: result.message, tone: 'success' })
+  } else {
+    ui.toast({ title: 'Не удалось переместить', message: result.message, tone: 'error' })
+  }
 }
 
 function onWheel(event: WheelEvent): void {
@@ -1016,9 +1046,9 @@ onBeforeUnmount(() => {
               :width="dragGhost.width"
               :height="dragGhost.height"
               rx="4"
-              :fill="dragGhost.valid ? '#bdfa45' : '#fb7185'"
+              :fill="dragGhost.mode === 'swap' ? '#fbbf24' : dragGhost.valid ? '#bdfa45' : '#fb7185'"
               fill-opacity="0.08"
-              :stroke="dragGhost.valid ? '#bdfa45' : '#fb7185'"
+              :stroke="dragGhost.mode === 'swap' ? '#fbbf24' : dragGhost.valid ? '#bdfa45' : '#fb7185'"
               stroke-width="1.2"
               stroke-dasharray="4 3"
             />
@@ -1026,17 +1056,17 @@ onBeforeUnmount(() => {
               :x="dragGhost.x + dragGhost.width / 2"
               :y="dragGhost.y + dragGhost.height / 2 - 3"
               text-anchor="middle"
-              :fill="dragGhost.valid ? '#d3ff80' : '#fda4af'"
+              :fill="dragGhost.mode === 'swap' ? '#fcd34d' : dragGhost.valid ? '#d3ff80' : '#fda4af'"
               font-family="JetBrains Mono Variable, monospace"
               font-size="7"
             >
-              {{ dragGhost.valid ? 'ПЕРЕМЕСТИТЬ' : 'НЕТ МЕСТА' }}
+              {{ dragGhost.mode === 'swap' ? 'ОБМЕН' : dragGhost.valid ? 'ПЕРЕМЕСТИТЬ' : 'НЕТ МЕСТА' }}
             </text>
             <text
               :x="dragGhost.x + dragGhost.width / 2"
               :y="dragGhost.y + dragGhost.height / 2 + 8"
               text-anchor="middle"
-              :fill="dragGhost.valid ? '#8fb34a' : '#fb7185'"
+              :fill="dragGhost.mode === 'swap' ? '#d97706' : dragGhost.valid ? '#8fb34a' : '#fb7185'"
               font-family="JetBrains Mono Variable, monospace"
               font-size="5.5"
             >

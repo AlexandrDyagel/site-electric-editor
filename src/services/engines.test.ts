@@ -115,6 +115,36 @@ describe('layout engine', () => {
     expect(before).toBe(11)
     expect(result.components.find((item) => item.uid === 'bus-l')?.position).toBe(8)
   })
+
+  it('меняет местами одинаковые аппараты при drop друг на друга', () => {
+    const project = createDemoProject()
+    const result = reorderOnRail(project, 'c-qf-light', 'rail-2', 7)
+    expect(result.ok).toBe(true)
+    expect(result.kind).toBe('swap')
+    expect(result.components.find((item) => item.uid === 'c-qf-light')?.position).toBe(7)
+    expect(result.components.find((item) => item.uid === 'c-qf-kitchen')?.position).toBe(6)
+  })
+
+  it('перестраивает ряд, если обмен позициями невозможен из-за ширины', () => {
+    const project = createEmptyProject()
+    project.components = [
+      { uid: 'wide', defId: 'br-4p-c-16', dinRailId: 'rail-2', position: 0 },
+      { uid: 'small', defId: 'br-1p-c-16', dinRailId: 'rail-2', position: 5 },
+      { uid: 'neighbor', defId: 'br-1p-c-16', dinRailId: 'rail-2', position: 6 },
+    ]
+    const result = reorderOnRail(project, 'small', 'rail-2', 0)
+    expect(result.ok).toBe(true)
+    expect(result.kind).toBe('reorder')
+    const positions = result.components
+      .filter((item) => item.dinRailId === 'rail-2')
+      .map((item) => ({ uid: item.uid, start: item.position, end: item.position + (item.uid === 'wide' ? 4 : 1) }))
+      .sort((a, b) => a.start - b.start)
+    for (let index = 1; index < positions.length; index += 1) {
+      const previous = positions[index - 1]
+      const current = positions[index]
+      if (previous && current) expect(current.start).toBeGreaterThanOrEqual(previous.end)
+    }
+  })
 })
 
 describe('calculation engine', () => {

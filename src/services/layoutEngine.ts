@@ -154,11 +154,17 @@ export interface ReorderResult {
   position?: number
   /** true, если точная позиция была занята и выбрано ближайшее окно. */
   snapped?: boolean
+  kind?: 'free' | 'swap' | 'reorder'
+  targetUid?: string
 }
 
 interface OccupiedInterval {
   start: number
   end: number
+}
+
+function componentSize(component: PlacedComponent): number {
+  return getComponentDef(component.defId)?.sizeModules ?? 0
 }
 
 function occupiedIntervals(
@@ -169,7 +175,7 @@ function occupiedIntervals(
   return project.components
     .filter((item) => item.dinRailId === railId && item.uid !== ignoreUid)
     .map((item) => {
-      const size = getComponentDef(item.defId)?.sizeModules ?? 0
+      const size = componentSize(item)
       return { start: item.position, end: item.position + size }
     })
     .filter((interval) => interval.end > interval.start)
@@ -207,14 +213,63 @@ export function findFreeModule(
   return null
 }
 
+/** Компонент, с которым пересекается предлагаемое окно перемещения. */
+export function findOverlapTarget(
+  project: PanelProject,
+  railId: string,
+  startModule: number,
+  sizeModules: number,
+  ignoreUid?: string,
+): PlacedComponent | null {
+  const start = startModule
+  const end = startModule + sizeModules
+  const candidates = project.components
+    .filter((item) => item.dinRailId === railId && item.uid !== ignoreUid)
+    .map((item) => {
+      const size = componentSize(item)
+      const overlap = Math.max(0, Math.min(end, item.position + size) - Math.max(start, item.position))
+      return { item, overlap, distance: Math.abs(item.position - start) }
+    })
+    .filter((entry) => entry.overlap > 0)
+    .sort((a, b) => b.overlap - a.overlap || a.distance - b.distance)
+  return candidates[0]?.item ?? null
+}
+
+function validRailPlacement(
+  components: PlacedComponent[],
+  rails: PanelProject['rails'],
+): boolean {
+  const capacities = new Map(rails.map((rail) => [rail.id, rail.capacity]))
+  const byRail = new Map<string, OccupiedInterval[]>()
+  for (const component of components) {
+    const capacity = capacities.get(component.dinRailId)
+    const size = componentSize(component)
+    if (capacity === undefined || size <= 0) return false
+    if (component.position < 0 || component.position + size > capacity) return false
+    const list = byRail.get(component.dinRailId) ?? []
+    list.push({ start: component.position, end: component.position + size })
+    byRail.set(component.dinRailId, list)
+  }
+  for (const list of byRail.values()) {
+    list.sort((a, b) => a.start - b.start)
+    for (let index = 1; index < list.length; index += 1) {
+      const previous = list[index - 1]
+      const current = list[index]
+      if (previous && current && current.start < previous.end) return false
+    }
+  }
+  return true
+}
+
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
 /**
- * Перемещение аппарата по рейке с привязкой к сетке.
- * Точка drop имеет приоритет, если окно свободно. Иначе выбирается ближайшее
- * свободное окно, а не начало рейки.
+ * Перемещение аппарата по рейке.
+ * 1. Свободное окно в точке drop — точная позиция с сохранением промежутков.
+ * 2. Drop на другой аппарат — обмен местами, если после него нет наложений.
+ * 3. Если обмен невозможен из-за разной ширины — вставка с перестройкой ряда.
  */
 export function reorderOnRail(
   project: PanelProject,
@@ -229,30 +284,95 @@ export function reorderOnRail(
   if (!movingDef || !targetRail) {
     return { components: project.components, ok: false, reason: 'Рейка не найдена' }
   }
-  const requested = clampNumber(Math.round(targetModule), 0, Math.max(0, targetRail.capacity - movingDef.sizeModules))
-  const position = findFreeModule(
+  const requested = clampNumber(
+    Math.round(targetModule),
+    0,
+    Math.max(0, targetRail.capacity - movingDef.sizeModules),
+  )
+  const free = findFreeModule(
     project,
     targetRailId,
     requested,
     movingDef.sizeModules,
     componentUid,
   )
-  if (position === null) {
+  if (free === requested) {
+    return {
+      components: project.components.map((item) =>
+        item.uid === componentUid ? { ...item, dinRailId: targetRailId, position: requested } : item,
+      ),
+      ok: true,
+      position: requested,
+      snapped: false,
+      kind: 'free',
+    }
+  }
+
+  const target = findOverlapTarget(
+    project,
+    targetRailId,
+    requested,
+    movingDef.sizeModules,
+    componentUid,
+  )
+  if (target) {
+    const swapped = project.components.map((item) => {
+      if (item.uid === componentUid) {
+        return { ...item, dinRailId: targetRailId, position: target.position }
+      }
+      if (item.uid === target.uid) {
+        return { ...item, dinRailId: moving.dinRailId, position: moving.position }
+      }
+      return item
+    })
+    if (validRailPlacement(swapped, project.rails)) {
+      return {
+        components: swapped,
+        ok: true,
+        position: target.position,
+        snapped: false,
+        kind: 'swap',
+        targetUid: target.uid,
+      }
+    }
+  }
+
+  // Резервный сценарий для аппаратов разной ширины: вставляем в позицию
+  // drop и уплотняем только целевой ряд, сохраняя остальные рейки.
+  const sameRail = project.components
+    .filter((item) => item.dinRailId === targetRailId && item.uid !== componentUid)
+    .sort((a, b) => a.position - b.position)
+  const insertionIndex = sameRail.filter((item) => item.position < requested).length
+  const sequence = [...sameRail]
+  sequence.splice(insertionIndex, 0, { ...moving, dinRailId: targetRailId })
+  let cursor = 0
+  const normalized: PlacedComponent[] = []
+  for (const item of sequence) {
+    const size = componentSize(item)
+    normalized.push({ ...item, dinRailId: targetRailId, position: cursor })
+    cursor += size
+  }
+  if (cursor > targetRail.capacity) {
     return {
       components: project.components,
       ok: false,
-      reason: `На рейке «${targetRail.name}» нет свободного окна на ${movingDef.sizeModules} модулей`,
+      reason: `На рейке «${targetRail.name}» не хватает ${cursor - targetRail.capacity} модулей`,
     }
   }
+  const untouched = project.components.filter(
+    (item) => item.uid !== componentUid && item.dinRailId !== targetRailId,
+  )
+  const result = [...untouched, ...normalized]
+  if (!validRailPlacement(result, project.rails)) {
+    return { components: project.components, ok: false, reason: 'Не удалось перестроить ряд' }
+  }
+  const position = normalized.find((item) => item.uid === componentUid)?.position ?? requested
   return {
-    components: project.components.map((item) =>
-      item.uid === componentUid
-        ? { ...item, dinRailId: targetRailId, position }
-        : item,
-    ),
+    components: result,
     ok: true,
     position,
     snapped: position !== requested,
+    kind: 'reorder',
   }
 }
 

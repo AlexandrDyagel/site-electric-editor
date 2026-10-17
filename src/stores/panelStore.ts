@@ -218,12 +218,15 @@ export const usePanelStore = defineStore('panel', () => {
     }
     project.value.components = result.components
     touch()
-    return {
-      ok: true,
-      message: result.snapped
-        ? 'Ближайшее свободное окно на рейке'
-        : 'Компонент перемещён',
-    }
+    const message =
+      result.kind === 'swap'
+        ? 'Аппараты поменялись местами'
+        : result.kind === 'reorder'
+          ? 'Ряд перестроен, оборудование вставлено в выбранную позицию'
+          : result.snapped
+            ? 'Ближайшее свободное окно на рейке'
+            : 'Компонент перемещён'
+    return { ok: true, message }
   }
 
   function removeComponent(uid: string): ActionResult {

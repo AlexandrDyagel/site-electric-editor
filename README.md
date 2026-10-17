@@ -79,7 +79,7 @@ pnpm dev
 Приложение будет доступно на `http://127.0.0.1:5173`.
 
 ```bash
-pnpm test        # 16 доменных тестов
+pnpm test        # 18 доменных тестов
 pnpm typecheck   # строгая проверка TypeScript
 pnpm build       # production-сборка
 pnpm preview     # предпросмотр собранного приложения
